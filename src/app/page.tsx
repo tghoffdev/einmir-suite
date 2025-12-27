@@ -20,7 +20,7 @@ import { PreviewFrame, type PreviewFrameHandle } from "@/components/preview-fram
 import { BackgroundColorPicker } from "@/components/background-color-picker";
 import { CaptureControls } from "@/components/capture-controls";
 import { AuditPanel, type MRAIDEvent } from "@/components/audit-panel";
-import { scanTextElements, type TextElement } from "@/lib/dco/scanner";
+import { scanTextElements, updateTextElement, type TextElement } from "@/lib/dco/scanner";
 import { detectMacros } from "@/lib/macros/detector";
 import { detectVendor } from "@/lib/vendors";
 import {
@@ -80,6 +80,8 @@ export default function Home() {
   // Audit panel + DCO
   const [auditPanelOpen, setAuditPanelOpen] = useState(false);
   const [textElements, setTextElements] = useState<TextElement[]>([]);
+  // Store text modifications to re-apply after reload (originalText -> currentText)
+  const pendingTextModsRef = useRef<Map<string, string>>(new Map());
 
   // Help highlight state
   type HighlightSection = "content" | "size" | "display" | "preview" | "audit" | null;
@@ -250,6 +252,20 @@ export default function Home() {
     setPreviewKey((k) => k + 1);
   }, []);
 
+  // Handle text modifications reload - stores mods and reloads
+  const handleTextReloadWithChanges = useCallback(() => {
+    // Store current text modifications to re-apply after reload
+    textElements.forEach(el => {
+      if (el.currentText !== el.originalText) {
+        pendingTextModsRef.current.set(el.originalText, el.currentText);
+      }
+    });
+    console.log("[DCO] Stored", pendingTextModsRef.current.size, "text modifications for reload");
+    // Trigger reload
+    setIsAdReady(false);
+    setPreviewKey((k) => k + 1);
+  }, [textElements]);
+
   const handleReload = useCallback(() => {
     if (loadedTag || html5Url) {
       setIsAdReady(false);
@@ -276,9 +292,26 @@ export default function Home() {
     if (iframe) {
       // Delay slightly to ensure ad has fully rendered
       setTimeout(() => {
-        const elements = scanTextElements(iframe);
-        setTextElements(elements);
+        let elements = scanTextElements(iframe);
         console.log("[DCO] Scanned", elements.length, "text elements");
+
+        // Check for pending modifications to re-apply
+        if (pendingTextModsRef.current.size > 0) {
+          console.log("[DCO] Re-applying", pendingTextModsRef.current.size, "pending modifications");
+          elements = elements.map(el => {
+            const pendingText = pendingTextModsRef.current.get(el.originalText);
+            if (pendingText && pendingText !== el.originalText) {
+              // Apply the modification to the DOM and update the element
+              updateTextElement(el, pendingText);
+              return { ...el, currentText: pendingText };
+            }
+            return el;
+          });
+          // Clear pending modifications after applying
+          pendingTextModsRef.current.clear();
+        }
+
+        setTextElements(elements);
       }, 500);
     }
   }, []);
@@ -737,6 +770,7 @@ export default function Home() {
                 mraidEvents={mraidEvents}
                 onMacrosChange={handleMacrosChange}
                 onReloadWithChanges={handleMacrosChange}
+                onTextReloadWithChanges={handleTextReloadWithChanges}
               />
             </div>
           </div>

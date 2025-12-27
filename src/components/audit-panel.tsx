@@ -50,8 +50,10 @@ interface AuditPanelProps {
   mraidEvents?: MRAIDEvent[];
   /** Callback when macros are edited - returns modified tag */
   onMacrosChange?: (modifiedTag: string) => void;
-  /** Callback to reload the ad with changes applied */
+  /** Callback to reload the ad with macro changes applied */
   onReloadWithChanges?: (modifiedTag: string) => void;
+  /** Callback to reload the ad with text changes (stores and re-applies DOM mods) */
+  onTextReloadWithChanges?: () => void;
 }
 
 export function AuditPanel({
@@ -65,6 +67,7 @@ export function AuditPanel({
   mraidEvents = [],
   onMacrosChange,
   onReloadWithChanges,
+  onTextReloadWithChanges,
 }: AuditPanelProps) {
   // Track the "base tag" for macro detection - the original tag before any macro replacements
   const [baseTag, setBaseTag] = useState(tag);
@@ -317,14 +320,16 @@ export function AuditPanel({
             >
               <div className="space-y-2 pt-2">
                 {/* Reload with changes button - at top */}
-                {hasModifications && onReloadWithChanges && (
+                {hasModifications && onTextReloadWithChanges && (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => {
+                      // Save modified tag for export before reload
                       const result = generateModifiedTag(tag, textElements);
                       setLastTextModifiedTag(result.tag);
-                      onReloadWithChanges(result.tag);
+                      // Use text-specific reload that stores/re-applies DOM mods
+                      onTextReloadWithChanges();
                     }}
                     className="w-full mb-1 h-7 text-xs text-cyan-400 border-cyan-500/50 hover:bg-cyan-500/10"
                   >
