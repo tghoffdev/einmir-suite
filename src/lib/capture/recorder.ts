@@ -16,8 +16,10 @@ export type RecordingMode = "fullscreen" | "clip";
 export interface CropConfig {
   /** Element to crop to, or a function that returns the element (for dynamic refs) */
   element: Element | (() => Element | null);
-  width: number;
-  height: number;
+  /** Width to crop to, or a function that returns the width (for dynamic sizes) */
+  width: number | (() => number);
+  /** Height to crop to, or a function that returns the height (for dynamic sizes) */
+  height: number | (() => number);
 }
 
 export interface RecorderState {
@@ -67,7 +69,7 @@ function createCroppedStream(
   sourceStream: MediaStream,
   cropConfig: CropConfig
 ): { stream: MediaStream; cleanup: () => void } {
-  const { element: elementOrGetter, width, height } = cropConfig;
+  const { element: elementOrGetter, width: widthOrGetter, height: heightOrGetter } = cropConfig;
 
   // Helper to get the current element (supports both direct element and getter function)
   const getElement = (): Element | null => {
@@ -77,10 +79,18 @@ function createCroppedStream(
     return elementOrGetter;
   };
 
-  // Create canvas for cropping
+  // Helpers to get current dimensions (supports both direct values and getter functions)
+  const getWidth = (): number => {
+    return typeof widthOrGetter === "function" ? widthOrGetter() : widthOrGetter;
+  };
+  const getHeight = (): number => {
+    return typeof heightOrGetter === "function" ? heightOrGetter() : heightOrGetter;
+  };
+
+  // Create canvas for cropping - start with initial dimensions
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = getWidth();
+  canvas.height = getHeight();
   const ctx = canvas.getContext("2d")!;
 
   // Create video element to play the source stream
@@ -93,6 +103,8 @@ function createCroppedStream(
   let animationId: number;
   let isRunning = true;
 
+  let frameCount = 0;
+
   // Animation loop to draw cropped frames
   const drawFrame = () => {
     if (!isRunning) return;
@@ -100,8 +112,33 @@ function createCroppedStream(
     // Get current element (may change if component remounts)
     const element = getElement();
     if (!element) {
+      if (frameCount % 60 === 0) {
+        console.warn("[Recorder] Element is null, skipping frame", frameCount);
+      }
+      frameCount++;
       animationId = requestAnimationFrame(drawFrame);
       return;
+    }
+
+    // Get current dimensions (may change if user resizes)
+    const width = getWidth();
+    const height = getHeight();
+
+    // Validate dimensions
+    if (!width || !height || width <= 0 || height <= 0) {
+      if (frameCount % 60 === 0) {
+        console.warn("[Recorder] Invalid dimensions:", { width, height });
+      }
+      frameCount++;
+      animationId = requestAnimationFrame(drawFrame);
+      return;
+    }
+
+    // Update canvas size if dimensions changed
+    if (canvas.width !== width || canvas.height !== height) {
+      console.log("[Recorder] Canvas resize:", canvas.width, "x", canvas.height, "->", width, "x", height);
+      canvas.width = width;
+      canvas.height = height;
     }
 
     // Get element position relative to viewport
@@ -138,7 +175,12 @@ function createCroppedStream(
 
   // Start drawing when video is ready
   video.onloadedmetadata = () => {
+    console.log("[Recorder] Video metadata loaded:", video.videoWidth, "x", video.videoHeight);
     drawFrame();
+  };
+
+  video.onerror = (e) => {
+    console.error("[Recorder] Video error:", e);
   };
 
   // Capture stream from canvas at 30fps
@@ -213,11 +255,13 @@ export async function createRecorder(
   mediaRecorder.ondataavailable = (event) => {
     if (event.data.size > 0) {
       chunks.push(event.data);
+      console.log("[Recorder] Data chunk received:", event.data.size, "bytes, total chunks:", chunks.length);
     }
   };
 
   return {
     start: () => {
+      console.log("[Recorder] Starting recording...");
       chunks.length = 0;
       startTime = Date.now();
       pausedDuration = 0;
@@ -228,17 +272,22 @@ export async function createRecorder(
 
     stop: () => {
       return new Promise<Blob>((resolve, reject) => {
+        console.log("[Recorder] Stopping recording, chunks so far:", chunks.length);
         mediaRecorder.onstop = () => {
           state.isRecording = false;
           state.isPaused = false;
           state.duration = Date.now() - startTime - pausedDuration;
 
+          console.log("[Recorder] Recording stopped, total chunks:", chunks.length);
+
           if (chunks.length === 0) {
+            console.error("[Recorder] No data recorded!");
             reject(new Error("No data recorded"));
             return;
           }
 
           const blob = new Blob(chunks, { type: mimeType });
+          console.log("[Recorder] Created blob:", blob.size, "bytes");
           resolve(blob);
         };
 

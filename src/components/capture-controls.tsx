@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import type { RecordingState } from "@/types";
+import type { RecordingState, OutputFormat } from "@/types";
 
 type RecordingMode = "fullscreen" | "clip";
 
@@ -26,6 +26,9 @@ interface CaptureControlsProps {
   onRecordingModeChange?: (mode: RecordingMode) => void;
   isRegionCaptureSupported?: boolean;
   isCountingDown?: boolean;
+  outputFormat?: OutputFormat;
+  onOutputFormatChange?: (format: OutputFormat) => void;
+  conversionProgress?: { progress: number; status: string } | null;
 }
 
 export function CaptureControls({
@@ -43,8 +46,31 @@ export function CaptureControls({
   onRecordingModeChange,
   isRegionCaptureSupported = false,
   isCountingDown = false,
+  outputFormat = "webm",
+  onOutputFormatChange,
+  conversionProgress,
 }: CaptureControlsProps) {
   const { isRecording, isProcessing, processingStatus } = recordingState;
+
+  // Show conversion progress
+  if (conversionProgress) {
+    return (
+      <div className="flex items-center gap-2">
+        <Button disabled variant="secondary" size="sm">
+          {conversionProgress.status}
+        </Button>
+        <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary transition-all duration-300"
+            style={{ width: `${conversionProgress.progress}%` }}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {conversionProgress.progress}%
+        </span>
+      </div>
+    );
+  }
 
   if (isProcessing) {
     return (
@@ -149,6 +175,34 @@ export function CaptureControls({
             title="Record the full browser tab"
           >
             Full
+          </button>
+        </div>
+      )}
+
+      {/* Output format toggle */}
+      {onOutputFormatChange && (
+        <div className="flex border border-border rounded-md overflow-hidden">
+          <button
+            onClick={() => onOutputFormatChange("webm")}
+            className={`px-2 py-1 text-xs transition-colors ${
+              outputFormat === "webm"
+                ? "bg-primary text-primary-foreground"
+                : "bg-background hover:bg-muted"
+            }`}
+            title="WebM format (faster, smaller)"
+          >
+            WebM
+          </button>
+          <button
+            onClick={() => onOutputFormatChange("mp4")}
+            className={`px-2 py-1 text-xs transition-colors border-l border-border ${
+              outputFormat === "mp4"
+                ? "bg-primary text-primary-foreground"
+                : "bg-background hover:bg-muted"
+            }`}
+            title="MP4 format (slower conversion, wider compatibility)"
+          >
+            MP4
           </button>
         </div>
       )}

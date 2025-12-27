@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { TagInput } from "@/components/tag-input";
+import { TagInput, type InputMode } from "@/components/tag-input";
 import { SizeSelector } from "@/components/size-selector";
 import { PreviewFrame } from "@/components/preview-frame";
 import { BackgroundColorPicker } from "@/components/background-color-picker";
@@ -16,7 +16,16 @@ import {
 } from "@/hooks/use-recorder";
 import { captureScreenshot, downloadScreenshot } from "@/lib/capture/screenshot";
 import { createZipArchive, downloadBlob, type ZipFile } from "@/lib/capture/zip";
-import type { AdSize } from "@/types";
+import { useProcessing } from "@/hooks/use-processing";
+import type { AdSize, OutputFormat } from "@/types";
+import {
+  registerServiceWorker,
+  loadHtml5Ad,
+  getPreviewUrl,
+  clearHtml5Ad,
+  updateConfig,
+} from "@/lib/html5/sw-manager";
+import type { ZipLoadResult } from "@/lib/html5/zip-loader";
 
 export default function Home() {
   const [tagValue, setTagValue] = useState("");
@@ -28,9 +37,20 @@ export default function Home() {
   const [isAdReady, setIsAdReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
 
+  // HTML5 zip upload state
+  const [inputMode, setInputMode] = useState<InputMode>("tag");
+  const [html5Url, setHtml5Url] = useState<string | null>(null);
+  const [html5EntryPoint, setHtml5EntryPoint] = useState<string | null>(null);
+  const [swReady, setSwReady] = useState(false);
+  const [isLoadingHtml5, setIsLoadingHtml5] = useState(false);
+
   // Preview settings
   const [backgroundColor, setBackgroundColor] = useState("#0f0f23");
   const [recordingMode, setRecordingMode] = useState<RecordingMode>("clip");
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("webm");
+
+  // Processing hook for MP4 conversion
+  const processing = useProcessing();
 
   // Track when we're in the process of starting a capture (before recording actually begins)
   const [isStartingCapture, setIsStartingCapture] = useState(false);
@@ -55,41 +75,121 @@ export default function Home() {
   // Ref to the preview container for screenshots
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
-  // Refs to track current dimensions for recording (avoids stale closures)
+  // Ref to resolve a promise when ad becomes ready (for reload-and-record)
+  const adReadyResolverRef = useRef<(() => void) | null>(null);
+
+  // Refs to track current dimensions and format for recording (avoids stale closures)
   const dimensionsRef = useRef({ width, height });
   dimensionsRef.current = { width, height };
+  const outputFormatRef = useRef(outputFormat);
+  outputFormatRef.current = outputFormat;
 
   // Recording hook - use ref for dimensions to avoid stale closure
   const recorder = useRecorder({
-    onRecordingComplete: (blob) => {
+    onRecordingComplete: async (blob) => {
       const { width: w, height: h } = dimensionsRef.current;
-      downloadVideo(blob, `recording-${w}x${h}-${Date.now()}.webm`);
+      const format = outputFormatRef.current;
+      const timestamp = Date.now();
+
+      if (format === "mp4") {
+        // Convert to MP4
+        const mp4Blob = await processing.processVideo(blob, "mp4");
+        downloadVideo(mp4Blob, `recording-${w}x${h}-${timestamp}.mp4`);
+      } else {
+        // Download as WebM directly
+        downloadVideo(blob, `recording-${w}x${h}-${timestamp}.webm`);
+      }
     },
   });
 
+  // Register service worker on mount for HTML5 zip support
+  useEffect(() => {
+    registerServiceWorker().then((ready) => {
+      setSwReady(ready);
+      if (!ready) {
+        console.warn("Service worker not available - HTML5 zip upload disabled");
+      }
+    });
+  }, []);
+
+  // Update service worker config when dimensions change (for HTML5 content)
+  useEffect(() => {
+    if (html5Url) {
+      updateConfig({ width, height });
+    }
+  }, [width, height, html5Url]);
+
+  // Handle HTML5 zip upload
+  const handleHtml5Load = useCallback(
+    async (result: ZipLoadResult) => {
+      if (!swReady) {
+        console.error("Service worker not ready");
+        return;
+      }
+
+      setIsLoadingHtml5(true);
+      try {
+        // Clear any existing tag content
+        setLoadedTag(null);
+        setIsAdReady(false);
+
+        // Load files into service worker
+        await loadHtml5Ad(result.files, { width, height });
+
+        // Set the preview URL
+        const url = getPreviewUrl(result.entryPoint);
+        setHtml5EntryPoint(result.entryPoint);
+        setHtml5Url(url);
+        setPreviewKey((k) => k + 1);
+      } catch (error) {
+        console.error("Failed to load HTML5 ad:", error);
+      } finally {
+        setIsLoadingHtml5(false);
+      }
+    },
+    [swReady, width, height]
+  );
+
   const handleLoadTag = useCallback(() => {
     if (tagValue.trim()) {
+      // Clear HTML5 content when loading a tag
+      if (html5Url) {
+        clearHtml5Ad();
+        setHtml5Url(null);
+        setHtml5EntryPoint(null);
+      }
       setLoadedTag(tagValue.trim());
       setIsAdReady(false);
       setPreviewKey((k) => k + 1);
     }
-  }, [tagValue]);
+  }, [tagValue, html5Url]);
 
   const handleReload = useCallback(() => {
-    if (loadedTag) {
+    if (loadedTag || html5Url) {
       setIsAdReady(false);
       setPreviewKey((k) => k + 1);
     }
-  }, [loadedTag]);
+  }, [loadedTag, html5Url]);
 
   const handleClear = useCallback(() => {
     setLoadedTag(null);
     setIsAdReady(false);
     setTagValue("");
-  }, []);
+    // Also clear HTML5 content
+    if (html5Url) {
+      clearHtml5Ad();
+      setHtml5Url(null);
+      setHtml5EntryPoint(null);
+    }
+  }, [html5Url]);
 
   const handleAdReady = useCallback(() => {
     setIsAdReady(true);
+    // If we're waiting for ad ready (reload-and-record), resolve the promise
+    if (adReadyResolverRef.current) {
+      adReadyResolverRef.current();
+      adReadyResolverRef.current = null;
+    }
   }, []);
 
   const handleResize = useCallback((newWidth: number, newHeight: number) => {
@@ -186,14 +286,12 @@ export default function Home() {
     try {
       let cropConfig: CropConfig | null = null;
 
-      // Use ref to ensure we always have the latest dimensions
-      const { width: currentWidth, height: currentHeight } = dimensionsRef.current;
-
       if (recordingMode === "clip" && previewFrameRef.current) {
+        // Use getter functions for dynamic dimensions
         cropConfig = {
-          element: previewFrameRef.current,
-          width: currentWidth,
-          height: currentHeight,
+          element: () => previewFrameRef.current,
+          width: () => dimensionsRef.current.width,
+          height: () => dimensionsRef.current.height,
         };
       }
 
@@ -214,22 +312,21 @@ export default function Home() {
   }, [recorder]);
 
   const handleReloadAndRecord = useCallback(async () => {
-    if (!loadedTag) return;
+    if (!loadedTag && !html5Url) return;
 
     setIsStartingCapture(true);
     try {
       // Step 1: Request screen capture permission first (shows dialog)
       // This prepares the stream but doesn't start recording yet
       let cropConfig: CropConfig | null = null;
-      const { width: currentWidth, height: currentHeight } = dimensionsRef.current;
 
       if (recordingMode === "clip") {
-        // Use a getter function so it always gets the current element
-        // (the element changes when the preview reloads)
+        // Use getter functions so they always get the current element/dimensions
+        // (the element changes when the preview reloads, dimensions change on resize)
         cropConfig = {
           element: () => previewFrameRef.current,
-          width: currentWidth,
-          height: currentHeight,
+          width: () => dimensionsRef.current.width,
+          height: () => dimensionsRef.current.height,
         };
       }
 
@@ -243,11 +340,23 @@ export default function Home() {
       }
       setCountdown(null);
 
-      // Step 3: Reload the ad unit (this triggers a fresh playback)
+      // Step 3: Wait for countdown overlay to clear from the DOM
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Step 4: Reload the ad unit and wait for it to be ready
+      const adReadyPromise = new Promise<void>((resolve) => {
+        adReadyResolverRef.current = resolve;
+      });
       setIsAdReady(false);
       setPreviewKey((k) => k + 1);
 
-      // Step 4: Start the recording now
+      // Step 5: Wait for ad to signal ready
+      await adReadyPromise;
+
+      // Step 6: Delay after ready to let ad fully render (skip loading animations)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      // Step 7: Start the recording now
       recorder.beginPreparedRecording();
     } catch (error) {
       console.error("Failed to start reload-and-record:", error);
@@ -255,7 +364,7 @@ export default function Home() {
     } finally {
       setIsStartingCapture(false);
     }
-  }, [loadedTag, recorder, recordingMode]);
+  }, [loadedTag, html5Url, recorder, recordingMode]);
 
   return (
     <div className="h-screen bg-background overflow-hidden">
@@ -269,13 +378,16 @@ export default function Home() {
             {/* Tag Input */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">MRAID Tag</CardTitle>
+                <CardTitle className="text-base">Ad Content</CardTitle>
               </CardHeader>
               <CardContent>
                 <TagInput
                   value={tagValue}
                   onChange={setTagValue}
                   onLoad={handleLoadTag}
+                  onHtml5Load={handleHtml5Load}
+                  inputMode={inputMode}
+                  onInputModeChange={setInputMode}
                   disabled={false}
                 />
               </CardContent>
@@ -321,7 +433,7 @@ export default function Home() {
                   onClick={handleReload}
                   variant="outline"
                   size="sm"
-                  disabled={!loadedTag}
+                  disabled={!loadedTag && !html5Url}
                 >
                   Reload
                 </Button>
@@ -329,7 +441,7 @@ export default function Home() {
                   onClick={handleClear}
                   variant="outline"
                   size="sm"
-                  disabled={!loadedTag}
+                  disabled={!loadedTag && !html5Url}
                 >
                   Clear
                 </Button>
@@ -342,7 +454,7 @@ export default function Home() {
               </div>
               <CaptureControls
                 recordingState={recorder.state}
-                hasContent={!!loadedTag && isAdReady}
+                hasContent={(!!loadedTag || !!html5Url) && isAdReady}
                 onScreenshot={handleScreenshot}
                 onStartRecording={handleStartRecording}
                 onStopRecording={handleStopRecording}
@@ -355,6 +467,13 @@ export default function Home() {
                 onRecordingModeChange={setRecordingMode}
                 isRegionCaptureSupported={recorder.isRegionCaptureSupported}
                 isCountingDown={countdown !== null}
+                outputFormat={outputFormat}
+                onOutputFormatChange={setOutputFormat}
+                conversionProgress={
+                  processing.isProcessing
+                    ? { progress: processing.progress, status: processing.status }
+                    : null
+                }
               />
             </div>
             {/* Preview Area */}
@@ -366,6 +485,8 @@ export default function Home() {
                   width={width}
                   height={height}
                   tag={loadedTag}
+                  html5Url={html5Url}
+                  isLoadingHtml5={isLoadingHtml5}
                   backgroundColor={backgroundColor}
                   onReady={handleAdReady}
                   onResize={handleResize}

@@ -1,52 +1,53 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { processVideo as processVideoClient } from "@/lib/processing/client";
 import type { OutputFormat } from "@/types";
 
 /**
  * useProcessing Hook
  *
- * Manages video processing state (client or server).
- *
- * TODO: Phase 1/3 implementation
- * - Client-side FFmpeg WASM processing
- * - Server-side processing with ad modal
- * - Progress tracking
+ * Manages video processing state for client-side FFmpeg conversion.
  */
-
-export interface UseProcessingOptions {
-  preferServer?: boolean;
-}
 
 export interface UseProcessingReturn {
   isProcessing: boolean;
   progress: number;
   status: string;
-  processVideo: (
-    blob: Blob,
-    cropWidth: number,
-    cropHeight: number,
-    format: OutputFormat
-  ) => Promise<Blob>;
+  processVideo: (blob: Blob, format: OutputFormat) => Promise<Blob>;
 }
 
-export function useProcessing(
-  options?: UseProcessingOptions
-): UseProcessingReturn {
+export function useProcessing(): UseProcessingReturn {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
 
   const processVideo = useCallback(
-    async (
-      blob: Blob,
-      cropWidth: number,
-      cropHeight: number,
-      format: OutputFormat
-    ): Promise<Blob> => {
-      // Placeholder - return input blob unchanged
-      console.log("Processing not yet implemented");
-      return blob;
+    async (blob: Blob, format: OutputFormat): Promise<Blob> => {
+      // If WebM, no processing needed
+      if (format === "webm") {
+        return blob;
+      }
+
+      setIsProcessing(true);
+      setProgress(0);
+      setStatus("Starting conversion...");
+
+      try {
+        const result = await processVideoClient(blob, {
+          outputFormat: format,
+          onProgress: (prog, stat) => {
+            setProgress(prog);
+            setStatus(stat);
+          },
+        });
+
+        return result;
+      } finally {
+        setIsProcessing(false);
+        setProgress(0);
+        setStatus("");
+      }
     },
     []
   );

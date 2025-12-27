@@ -12,10 +12,16 @@ import { useMRAID } from "@/hooks/use-mraid";
 import { CeltraFrame } from "@/components/celtra-frame";
 import { detectCeltra } from "@/lib/vendors/celtra";
 
+export type ContentType = "tag" | "celtra" | "html5";
+
 interface PreviewFrameProps {
   width: number;
   height: number;
   tag: string | null;
+  /** URL for HTML5 content served by service worker */
+  html5Url?: string | null;
+  /** Show loading indicator for HTML5 content */
+  isLoadingHtml5?: boolean;
   backgroundColor?: string;
   onReady?: () => void;
   onReload?: () => void;
@@ -28,11 +34,12 @@ interface PreviewFrameProps {
 
 export const PreviewFrame = forwardRef<HTMLDivElement, PreviewFrameProps>(
   function PreviewFrame(
-    { width, height, tag, backgroundColor = "#0f0f23", onReady, onResize, suppressOverflowWarning = false, countdown = null },
+    { width, height, tag, html5Url, isLoadingHtml5 = false, backgroundColor = "#0f0f23", onReady, onResize, suppressOverflowWarning = false, countdown = null },
     ref
   ) {
   const mraid = useMRAID({ width, height });
   const [celtraReady, setCeltraReady] = useState(false);
+  const [html5Ready, setHtml5Ready] = useState(false);
   const [doesNotFit, setDoesNotFit] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -114,12 +121,22 @@ export const PreviewFrame = forwardRef<HTMLDivElement, PreviewFrameProps>(
     setCeltraReady(false);
   }, [tag]);
 
+  // Reset HTML5 ready state when URL changes
+  useEffect(() => {
+    setHtml5Ready(false);
+  }, [html5Url]);
+
   // Notify parent when ready
   useEffect(() => {
-    if (celtraInfo ? celtraReady : mraid.isReady) {
+    const isReady = html5Url
+      ? html5Ready
+      : celtraInfo
+        ? celtraReady
+        : mraid.isReady;
+    if (isReady) {
       onReady?.();
     }
-  }, [mraid.isReady, celtraReady, celtraInfo, onReady]);
+  }, [mraid.isReady, celtraReady, html5Ready, celtraInfo, html5Url, onReady]);
 
   // Countdown overlay for reload-and-record
   const CountdownOverlay = () => (
@@ -154,6 +171,40 @@ export const PreviewFrame = forwardRef<HTMLDivElement, PreviewFrameProps>(
       </div>
     </div>
   );
+
+  // Render HTML5 content from service worker
+  if (html5Url) {
+    return (
+      <div
+        ref={setRefs}
+        className="relative flex items-center justify-center h-full min-h-[400px] rounded-lg"
+        style={{ backgroundColor }}
+      >
+        {countdown !== null && <CountdownOverlay />}
+        {doesNotFit && !suppressOverflowWarning && <OverflowWarning />}
+        <div className="relative border border-border rounded overflow-hidden bg-white">
+          <iframe
+            src={html5Url}
+            width={width}
+            height={height}
+            style={{ border: "none", display: "block" }}
+            allow="autoplay; fullscreen; encrypted-media"
+            onLoad={() => setHtml5Ready(true)}
+          />
+        </div>
+
+        {/* HTML5 badge */}
+        <div className="absolute top-2 left-2 text-xs text-green-400 bg-green-950/80 px-2 py-1 rounded">
+          HTML5
+        </div>
+
+        {/* Size indicator */}
+        <div className="absolute bottom-2 right-2 text-xs text-muted-foreground bg-background/80 px-2 py-1 rounded">
+          {width} × {height}
+        </div>
+      </div>
+    );
+  }
 
   // Render Celtra ads differently
   if (tag && celtraInfo) {
@@ -215,16 +266,28 @@ export const PreviewFrame = forwardRef<HTMLDivElement, PreviewFrameProps>(
         className="relative border border-border rounded overflow-hidden bg-white"
         style={{ width, height }}
       >
-        {/* Show placeholder when no tag loaded */}
-        {!tag && !mraid.isLoading && (
+        {/* Show placeholder when no content loaded */}
+        {!tag && !html5Url && !mraid.isLoading && !isLoadingHtml5 && (
           <div className="absolute inset-0 flex items-center justify-center text-muted-foreground bg-muted/50">
             <p className="text-center px-4">
-              Paste an MRAID tag and click Load to preview
+              Load an ad tag or upload HTML5 to preview
             </p>
           </div>
         )}
 
-        {/* Loading indicator */}
+        {/* Loading indicator for HTML5 */}
+        {isLoadingHtml5 && (
+          <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-muted-foreground">
+                Loading HTML5 ad...
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Loading indicator for MRAID */}
         {mraid.isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
             <div className="flex flex-col items-center gap-2">
