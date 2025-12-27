@@ -156,7 +156,7 @@ export function TagInput({
       <TabsContent value="tag" className="mt-3">
         <div className="space-y-2">
           <Textarea
-            placeholder="Paste MRAID tag here..."
+            placeholder="Paste a tag here..."
             value={value}
             onChange={(e) => onChange(e.target.value)}
             className="h-[150px] max-h-[150px] overflow-y-auto font-mono text-sm resize-none"
