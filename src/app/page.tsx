@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,8 @@ import { SizeSelector } from "@/components/size-selector";
 import { PreviewFrame } from "@/components/preview-frame";
 import { BackgroundColorPicker } from "@/components/background-color-picker";
 import { CaptureControls } from "@/components/capture-controls";
+import { MacroDrawer, MacroTriggerButton } from "@/components/macro-drawer";
+import { detectMacros } from "@/lib/macros/detector";
 import {
   useRecorder,
   downloadVideo,
@@ -63,6 +65,10 @@ export default function Home() {
 
   // Countdown for reload-and-record
   const [countdown, setCountdown] = useState<number | null>(null);
+
+  // Macro drawer
+  const [macroDrawerOpen, setMacroDrawerOpen] = useState(false);
+  const detectedMacros = useMemo(() => detectMacros(tagValue), [tagValue]);
 
   // Ref for the preview frame (used for clip recording mode)
   const previewFrameRef = useRef<HTMLDivElement>(null);
@@ -483,6 +489,20 @@ export default function Home() {
                   <p>View source</p>
                 </TooltipContent>
               </Tooltip>
+
+              <span className="text-foreground/20 mx-1">|</span>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <MacroTriggerButton
+                    macroCount={detectedMacros.length}
+                    onClick={() => setMacroDrawerOpen(true)}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="font-mono text-xs">
+                  <p>Detected macros</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
 
             <Tooltip>
@@ -628,6 +648,13 @@ export default function Home() {
           </Card>
         </div>
       </main>
+
+      {/* Macro Detection Drawer */}
+      <MacroDrawer
+        tag={tagValue}
+        open={macroDrawerOpen}
+        onOpenChange={setMacroDrawerOpen}
+      />
     </div>
   );
 }
