@@ -104,6 +104,22 @@ const MACRO_PATTERNS: MacroPattern[] = [
   },
 ];
 
+// Blacklist of false positives - common code/tech terms that look like macros
+const MACRO_BLACKLIST = new Set([
+  // Tech/API terms
+  "MRAID", "JSON", "HTML", "HTTP", "HTTPS", "URL", "URI", "API", "SDK", "DOM",
+  "CSS", "XML", "AJAX", "REST", "CORS", "IFRAME", "SCRIPT", "STYLE",
+  // JavaScript globals/keywords
+  "NULL", "TRUE", "FALSE", "UNDEFINED", "NAN", "INFINITY",
+  "FUNCTION", "OBJECT", "ARRAY", "STRING", "NUMBER", "BOOLEAN",
+  "WINDOW", "DOCUMENT", "CONSOLE", "EVENT", "ERROR",
+  // Common code patterns
+  "TODO", "FIXME", "NOTE", "HACK", "XXX", "DEBUG",
+  "VERSION", "CONFIG", "OPTIONS", "SETTINGS", "PARAMS",
+  "WIDTH", "HEIGHT", "LEFT", "RIGHT", "TOP", "BOTTOM",
+  "INDEX", "COUNT", "LENGTH", "SIZE", "MAX", "MIN",
+]);
+
 // Common macro names for reference
 export const KNOWN_MACROS: Record<string, string> = {
   // Click/URL macros
@@ -178,6 +194,12 @@ export function detectMacros(tag: string): DetectedMacro[] {
     for (const match of matches) {
       const raw = match[0];
       const name = pattern.extract(match);
+
+      // Skip blacklisted terms (false positives)
+      if (MACRO_BLACKLIST.has(name)) {
+        continue;
+      }
+
       const key = `${pattern.format}:${name}`;
 
       if (macroMap.has(key)) {

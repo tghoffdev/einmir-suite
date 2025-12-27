@@ -634,12 +634,63 @@ interface MacroItemProps {
 }
 
 function MacroItem({ macro, value, onChange }: MacroItemProps) {
+  const [expanded, setExpanded] = useState(false);
   const description = getMacroDescription(macro.name);
   const formatDisplay = getFormatDisplay(macro.format);
   const hasValue = value.trim().length > 0;
+  const hasMultiple = macro.count > 1;
+
+  // If multiple occurrences, show collapsible header
+  if (hasMultiple && !expanded) {
+    return (
+      <div
+        className="group p-1.5 rounded bg-foreground/5 cursor-pointer hover:bg-foreground/10 transition-colors"
+        onClick={() => setExpanded(true)}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <svg
+              className="w-3 h-3 text-foreground/40 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <code className={`text-xs px-1.5 py-0.5 rounded truncate ${
+              hasValue
+                ? "text-emerald-400 bg-emerald-500/10"
+                : "text-cyan-400 bg-cyan-500/10"
+            }`}>
+              {macro.raw}
+            </code>
+          </div>
+          <span className="text-[9px] bg-foreground/10 px-1.5 py-0.5 rounded text-foreground/50 shrink-0">
+            {macro.count} occurrences
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="group p-1.5 rounded bg-foreground/5 space-y-1.5">
+      {hasMultiple && (
+        <div
+          className="flex items-center gap-1 text-[9px] text-foreground/40 cursor-pointer hover:text-foreground/60 transition-colors -mb-0.5"
+          onClick={() => setExpanded(false)}
+        >
+          <svg
+            className="w-3 h-3"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+          <span>{macro.count} occurrences</span>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2">
         <code className={`text-xs px-1.5 py-0.5 rounded truncate ${
           hasValue
@@ -652,11 +703,6 @@ function MacroItem({ macro, value, onChange }: MacroItemProps) {
           <span className="opacity-0 group-hover:opacity-100 transition-opacity">
             {formatDisplay}
           </span>
-          {macro.count > 1 && (
-            <span className="bg-foreground/10 px-1 py-0.5 rounded">
-              ×{macro.count}
-            </span>
-          )}
         </div>
       </div>
       {description && (

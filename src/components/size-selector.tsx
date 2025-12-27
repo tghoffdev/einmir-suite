@@ -153,7 +153,7 @@ export function SizeSelector({
       {/* Manual inputs */}
       <div className="flex gap-4 items-center">
         <div className="flex items-center gap-2">
-          <label htmlFor="width" className="text-sm text-muted-foreground">
+          <label htmlFor="width" className="text-xs text-muted-foreground">
             Width
           </label>
           <Input
@@ -170,7 +170,7 @@ export function SizeSelector({
         </div>
         <span className="text-muted-foreground">×</span>
         <div className="flex items-center gap-2">
-          <label htmlFor="height" className="text-sm text-muted-foreground">
+          <label htmlFor="height" className="text-xs text-muted-foreground">
             Height
           </label>
           <Input
@@ -189,7 +189,7 @@ export function SizeSelector({
 
       {/* Interstitial presets */}
       <div className="space-y-2">
-        <span className="text-xs text-muted-foreground uppercase tracking-wide">
+        <span className="text-xs text-muted-foreground">
           Interstitial
         </span>
         <div className="flex flex-wrap gap-1.5">
@@ -209,7 +209,7 @@ export function SizeSelector({
 
       {/* Banner presets */}
       <div className="space-y-2">
-        <span className="text-xs text-muted-foreground uppercase tracking-wide">
+        <span className="text-xs text-muted-foreground">
           Banner
         </span>
         <div className="flex flex-wrap gap-1.5">
@@ -231,7 +231,7 @@ export function SizeSelector({
       {false && onBatchSizesChange && (
         <div className="space-y-3 pt-3 border-t border-border">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground uppercase tracking-wide">
+            <span className="text-xs text-muted-foreground">
               Batch Capture Sizes
             </span>
             <div className="flex gap-2">
