@@ -166,13 +166,10 @@ export default function Home() {
           args: event.data.args,
           timestamp: event.data.timestamp,
         };
-        setMraidEvents((prev) => [...prev.slice(-9), newEvent]);
+        // Keep last 100 events for history (persistent - no auto-removal)
+        setMraidEvents((prev) => [...prev.slice(-99), newEvent]);
         // Track MRAID event
         analytics.mraidEvent(event.data.event, event.data.args?.length > 0);
-        // Auto-remove after 5 seconds
-        setTimeout(() => {
-          setMraidEvents((prev) => prev.filter((e) => e.id !== newEvent.id));
-        }, 5000);
       }
     };
     window.addEventListener("message", handleMessage);

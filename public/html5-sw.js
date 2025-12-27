@@ -2,10 +2,10 @@
  * HTML5 Ad Preview Service Worker
  *
  * Serves extracted HTML5 zip files from memory and injects MRAID bridge.
- * Version: 2 - Direct message response
+ * Version: 4 - Tracking pixel interception
  */
 
-const SW_VERSION = 3;
+const SW_VERSION = 4;
 const PREVIEW_PATH = '/html5-preview/';
 
 // In-memory cache for extracted files
@@ -206,6 +206,56 @@ function generateMRAIDBridge(width, height) {
     get: function() { return window.clickTag; },
     set: function(url) { window.clickTag = url; }
   });
+
+  // Intercept Image() for tracking pixel detection
+  var OriginalImage = window.Image;
+  window.Image = function(width, height) {
+    var img = new OriginalImage(width, height);
+    var originalSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src') ||
+                                 Object.getOwnPropertyDescriptor(img.__proto__, 'src');
+
+    Object.defineProperty(img, 'src', {
+      get: function() {
+        return originalSrcDescriptor ? originalSrcDescriptor.get.call(this) : this.getAttribute('src');
+      },
+      set: function(url) {
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+          // Detect tracking pixel patterns
+          var isTracker = /track|pixel|beacon|imp|view|click|event|log|analytics|collect/i.test(url);
+          if (isTracker) {
+            // Extract event type from URL
+            var eventType = 'pixel';
+            if (/imp/i.test(url)) eventType = 'impression';
+            else if (/view/i.test(url)) eventType = 'view';
+            else if (/click/i.test(url)) eventType = 'click';
+            else if (/track/i.test(url)) eventType = 'tracking';
+
+            console.log('[MRAID Bridge] Tracking pixel intercepted:', eventType, url);
+            notifyParent('pixel', [eventType, url]);
+          }
+        }
+        if (originalSrcDescriptor && originalSrcDescriptor.set) {
+          originalSrcDescriptor.set.call(this, url);
+        } else {
+          this.setAttribute('src', url);
+        }
+      },
+      configurable: true
+    });
+
+    return img;
+  };
+  window.Image.prototype = OriginalImage.prototype;
+
+  // Also intercept sendBeacon for modern tracking
+  if (navigator.sendBeacon) {
+    var originalSendBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function(url, data) {
+      console.log('[MRAID Bridge] sendBeacon intercepted:', url);
+      notifyParent('beacon', [url]);
+      return originalSendBeacon(url, data);
+    };
+  }
 
   function fireEvents() {
     state = 'default';

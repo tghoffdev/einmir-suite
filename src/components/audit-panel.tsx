@@ -153,6 +153,7 @@ export function AuditPanel({
   }, [tag, baseTag]);
 
   const [activeTab, setActiveTab] = useState<"macros" | "text">("macros");
+  const [logExpanded, setLogExpanded] = useState(true);
   const [showExport, setShowExport] = useState(false);
   const [copied, setCopied] = useState(false);
   // Store the last generated modified tag for text (persists after reload)
@@ -268,7 +269,7 @@ export function AuditPanel({
           ${open ? "w-[320px] opacity-100" : "w-0 opacity-0"}
         `}
       >
-        <div className="w-[320px] h-full border-l border-border bg-background flex flex-col">
+        <div className="w-[320px] h-full border-l border-border bg-background flex flex-col relative">
           {/* Header */}
           <div className="px-3 py-2 border-b border-border">
             <span className="text-[10px] font-mono font-normal text-emerald-400/70 uppercase tracking-widest">
@@ -566,30 +567,87 @@ export function AuditPanel({
             </TabsContent>
           </Tabs>
 
-          {/* MRAID Events at bottom of panel */}
-          {mraidEvents.length > 0 && (
-            <div className="border-t border-border px-3 py-2 space-y-1.5 max-h-[200px] overflow-y-auto">
-              <div className="text-[10px] text-foreground/40 uppercase tracking-wider">
-                MRAID Events
-              </div>
-              {mraidEvents.slice(-5).map((event) => (
-                <div
-                  key={event.id}
-                  className="bg-foreground/5 border border-border/50 rounded px-2 py-1.5 animate-in slide-in-from-bottom-2 duration-300"
+          {/* Collapsible Log Panel - overlay from bottom */}
+          <div className="absolute bottom-0 left-0 right-0 z-20 bg-background border-t border-border shadow-lg">
+            {/* Log header - always visible */}
+            <button
+              onClick={() => setLogExpanded(!logExpanded)}
+              className="w-full px-3 py-1.5 flex items-center justify-between hover:bg-foreground/5 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <svg
+                  className={`w-3 h-3 text-foreground/40 transition-transform ${logExpanded ? "rotate-180" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                    <code className="text-xs text-emerald-400">{event.type}</code>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                </svg>
+                <span className="text-[10px] text-foreground/40 uppercase tracking-wider">
+                  Log
+                </span>
+                {mraidEvents.length > 0 && (
+                  <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">
+                    {mraidEvents.length}
+                  </span>
+                )}
+              </div>
+              {!logExpanded && mraidEvents.length > 0 && (
+                <span className="text-[9px] text-foreground/30 truncate max-w-[150px]">
+                  {mraidEvents[mraidEvents.length - 1]?.type}
+                </span>
+              )}
+            </button>
+
+            {/* Expanded log content - grows upward */}
+            <div
+              className={`transition-all duration-200 ease-out overflow-hidden ${
+                logExpanded ? "max-h-[300px]" : "max-h-0"
+              }`}
+            >
+              <div className="px-3 pb-2 space-y-1 overflow-y-auto max-h-[280px]">
+                {mraidEvents.length === 0 ? (
+                  <div className="text-center py-4 text-foreground/30 text-[10px]">
+                    Events will appear here as they fire
                   </div>
-                  {event.args && event.args.length > 0 && (
-                    <div className="text-[10px] text-foreground/50 mt-0.5 truncate pl-3.5">
-                      {JSON.stringify(event.args[0])}
+                ) : (
+                  [...mraidEvents].reverse().map((event) => (
+                    <div
+                      key={event.id}
+                      className="bg-foreground/5 border border-border/50 rounded px-2 py-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            event.type === 'pixel' || event.type === 'impression' || event.type === 'view'
+                              ? 'bg-purple-500'
+                              : event.type === 'open' || event.type === 'click'
+                              ? 'bg-cyan-500'
+                              : 'bg-emerald-500'
+                          }`} />
+                          <code className={`text-xs ${
+                            event.type === 'pixel' || event.type === 'impression' || event.type === 'view'
+                              ? 'text-purple-400'
+                              : event.type === 'open' || event.type === 'click'
+                              ? 'text-cyan-400'
+                              : 'text-emerald-400'
+                          }`}>{event.type}</code>
+                        </div>
+                        <span className="text-[9px] text-foreground/30">
+                          {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      </div>
+                      {event.args && event.args.length > 0 && (
+                        <div className="text-[10px] text-foreground/50 mt-0.5 truncate pl-3.5">
+                          {typeof event.args[0] === 'string' ? event.args[0] : JSON.stringify(event.args[0])}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                  ))
+                )}
+              </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
 

@@ -90,11 +90,11 @@ const MACRO_PATTERNS: MacroPattern[] = [
     regex: /@\{([A-Z][A-Z0-9_]{2,})\}/g,
     extract: (m) => m[1],
   },
-  // window.clickTag / window.clickTAG - HTML5 bundle click tracking
+  // window.clickTag / window.clickTAG / window.clickTag1, etc. - HTML5 bundle click tracking
   {
     format: "clicktag",
-    regex: /window\.(clickTag|clickTAG)\b/g,
-    extract: () => "CLICKTAG",
+    regex: /window\.(clickTag\d*|clickTAG\d*)\b/g,
+    extract: (m) => m[1].toUpperCase(),
   },
   // ?clickTag= or ?name= - Query param based macros in HTML5
   {
@@ -173,7 +173,12 @@ export const KNOWN_MACROS: Record<string, string> = {
   LINE_ITEM_ID: "Line item identifier",
 
   // HTML5 bundle macros
-  CLICKTAG: "Click tracking URL (HTML5)",
+  CLICKTAG: "Primary click URL",
+  CLICKTAG1: "Click URL #1",
+  CLICKTAG2: "Click URL #2",
+  CLICKTAG3: "Click URL #3",
+  CLICKTAG4: "Click URL #4",
+  CLICKTAG5: "Click URL #5",
   NAME: "Name/title text",
   OFFER: "Offer/promo text",
   HEADLINE: "Headline text",
@@ -387,9 +392,11 @@ export async function scanIframeForMacros(iframe: HTMLIFrameElement): Promise<De
 
     for (const script of Array.from(scripts)) {
       if (script.src) {
-        // External script - fetch it
+        // External script - fetch it using iframe's context (for service worker interception)
         try {
-          const response = await fetch(script.src);
+          // Use iframe's fetch to go through service worker
+          const iframeFetch = win.fetch?.bind(win) || fetch;
+          const response = await iframeFetch(script.src);
           if (response.ok) {
             const text = await response.text();
             scriptContents.push(text);
