@@ -394,19 +394,30 @@ export function AuditPanel({
                   </div>
                 ) : textElements.length === 0 ? (
                   <div className="text-center py-6 text-foreground/40 text-sm">
-                    <p>No editable text found</p>
-                    <p className="text-xs mt-2 text-foreground/30">
-                      Load an ad to scan for text elements
-                    </p>
-                    {onRescan && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={onRescan}
-                        className="mt-3"
-                      >
-                        Scan Ad
-                      </Button>
+                    {isHtml5 ? (
+                      <>
+                        <p>No editable text found</p>
+                        <p className="text-xs mt-2 text-foreground/30">
+                          Text elements will appear after scan
+                        </p>
+                        {onRescan && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={onRescan}
+                            className="mt-3"
+                          >
+                            Scan Ad
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p>Personalization available for HTML5 bundles</p>
+                        <p className="text-xs mt-2 text-foreground/30">
+                          Upload a .zip to edit text and dynamic content
+                        </p>
+                      </>
                     )}
                   </div>
                 ) : (
