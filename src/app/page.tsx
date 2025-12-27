@@ -21,7 +21,7 @@ import { BackgroundColorPicker } from "@/components/background-color-picker";
 import { CaptureControls } from "@/components/capture-controls";
 import { AuditPanel, type MRAIDEvent } from "@/components/audit-panel";
 import { scanTextElements, updateTextElement, type TextElement } from "@/lib/dco/scanner";
-import { detectMacros, scanIframeForMacros, replaceMacroInDOM, type DetectedMacro } from "@/lib/macros/detector";
+import { detectMacros, scanIframeForMacros, replaceMacroInDOM, clearMacroRegistry, type DetectedMacro } from "@/lib/macros/detector";
 import { detectVendor } from "@/lib/vendors";
 import {
   useRecorder,
@@ -306,6 +306,9 @@ export default function Home() {
   const scanAd = useCallback(() => {
     const iframe = previewFrameRef.current?.getIframe();
     if (iframe) {
+      // Clear macro replacement registry (fresh scan = fresh tracking)
+      clearMacroRegistry(iframe);
+
       // Delay slightly to ensure ad has fully rendered
       setTimeout(async () => {
         let elements = scanTextElements(iframe);
@@ -697,9 +700,9 @@ export default function Home() {
                     onMouseLeave={() => setHighlightedSection(null)}
                   >
                     <span className="text-emerald-400">Audit</span>
-                    <span className="text-foreground/50 ml-2">Macros, text editing, MRAID events</span>
+                    <span className="text-foreground/50 ml-2">Macros, personalize, MRAID events</span>
                     <div className="text-[9px] text-emerald-400/60 mt-0.5">
-                      Click the tab on the right edge of the controls
+                      Edit macro values, swap text, intercept clicks
                     </div>
                   </div>
                 </div>

@@ -5,7 +5,7 @@
  * Version: 2 - Direct message response
  */
 
-const SW_VERSION = 2;
+const SW_VERSION = 3;
 const PREVIEW_PATH = '/html5-preview/';
 
 // In-memory cache for extracted files
@@ -85,6 +85,16 @@ function generateMRAIDBridge(width, height) {
   var state = 'loading';
   var viewable = false;
 
+  // Helper to notify parent of events
+  function notifyParent(type, args) {
+    try {
+      window.parent.postMessage({ type: 'mraid-event', event: type, args: args || [], timestamp: Date.now() }, '*');
+      console.log('[MRAID Bridge] Event sent to parent:', type, args);
+    } catch (e) {
+      console.warn('[MRAID Bridge] Failed to notify parent:', e);
+    }
+  }
+
   window.mraid = {
     _initialized: true,
     getVersion: function() { return '3.0'; },
@@ -119,13 +129,32 @@ function generateMRAIDBridge(width, height) {
     removeEventListener: function(event, listener) {
       if (listeners[event]) listeners[event] = listeners[event].filter(function(l) { return l !== listener; });
     },
-    open: function(url) { if (url) window.open(url, '_blank'); },
-    close: function() {},
-    expand: function(url) { if (url) window.open(url, '_blank'); },
-    resize: function() {},
-    playVideo: function(url) { if (url) window.open(url, '_blank'); },
-    storePicture: function(url) {},
-    createCalendarEvent: function(params) {},
+    open: function(url) {
+      console.log('[MRAID] open() called:', url);
+      notifyParent('open', [url]);
+    },
+    close: function() {
+      console.log('[MRAID] close() called');
+      notifyParent('close');
+    },
+    expand: function(url) {
+      console.log('[MRAID] expand() called:', url);
+      notifyParent('expand', [url]);
+    },
+    resize: function() {
+      console.log('[MRAID] resize() called');
+      notifyParent('resize');
+    },
+    playVideo: function(url) {
+      console.log('[MRAID] playVideo() called:', url);
+      notifyParent('playVideo', [url]);
+    },
+    storePicture: function(url) {
+      notifyParent('storePicture', [url]);
+    },
+    createCalendarEvent: function(params) {
+      notifyParent('createCalendarEvent', [params]);
+    },
     _fireEvent: function(event, data) {
       if (listeners[event]) {
         listeners[event].forEach(function(listener) {
@@ -135,6 +164,48 @@ function generateMRAIDBridge(width, height) {
       }
     }
   };
+
+  // Intercept window.open to prevent new tabs/windows
+  var originalOpen = window.open;
+  window.open = function(url, target, features) {
+    console.log('[MRAID Bridge] window.open intercepted:', url);
+    notifyParent('open', [url]);
+    return null; // Prevent actual window opening
+  };
+
+  // Intercept link clicks that try to open new windows
+  document.addEventListener('click', function(e) {
+    var target = e.target;
+    // Walk up to find anchor tag
+    while (target && target.tagName !== 'A') {
+      target = target.parentElement;
+    }
+    if (target && target.tagName === 'A') {
+      var href = target.href;
+      var targetAttr = target.getAttribute('target');
+      // Intercept clicks that would navigate away or open new window
+      if (href && (targetAttr === '_blank' || targetAttr === '_top' || targetAttr === '_parent')) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('[MRAID Bridge] Link click intercepted:', href);
+        notifyParent('open', [href]);
+        return false;
+      }
+    }
+  }, true);
+
+  // Setup clickTag variable for HTML5 ads
+  Object.defineProperty(window, 'clickTag', {
+    get: function() { return 'javascript:void(0)'; },
+    set: function(url) {
+      console.log('[MRAID Bridge] clickTag set to:', url);
+      window._clickTagUrl = url;
+    }
+  });
+  Object.defineProperty(window, 'clickTAG', {
+    get: function() { return window.clickTag; },
+    set: function(url) { window.clickTag = url; }
+  });
 
   function fireEvents() {
     state = 'default';
@@ -151,7 +222,7 @@ function generateMRAIDBridge(width, height) {
     setTimeout(fireEvents, 0);
   }
 
-  console.log('[MRAID Mock] Initialized');
+  console.log('[MRAID Mock] Initialized with click interceptors');
 })();
 </script>
 `;

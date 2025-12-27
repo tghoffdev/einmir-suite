@@ -152,23 +152,46 @@
       }
     },
 
-    // Actions
+    // Actions - log events without opening new windows
     open: function(url) {
-      if (url) {
-        window.open(url, '_blank');
-      }
+      console.log('[MRAID] open() called:', url);
+      // Notify parent frame of click event
+      try {
+        window.parent.postMessage({
+          type: 'mraid-event',
+          event: 'click',
+          args: [url],
+          timestamp: Date.now()
+        }, '*');
+      } catch (e) {}
     },
-    close: function() {},
+    close: function() {
+      console.log('[MRAID] close() called');
+    },
     expand: function(url) {
-      if (url) {
-        window.open(url, '_blank');
-      }
+      console.log('[MRAID] expand() called:', url);
+      try {
+        window.parent.postMessage({
+          type: 'mraid-event',
+          event: 'expand',
+          args: [url],
+          timestamp: Date.now()
+        }, '*');
+      } catch (e) {}
     },
-    resize: function() {},
+    resize: function() {
+      console.log('[MRAID] resize() called');
+    },
     playVideo: function(url) {
-      if (url) {
-        window.open(url, '_blank');
-      }
+      console.log('[MRAID] playVideo() called:', url);
+      try {
+        window.parent.postMessage({
+          type: 'mraid-event',
+          event: 'playVideo',
+          args: [url],
+          timestamp: Date.now()
+        }, '*');
+      } catch (e) {}
     },
     storePicture: function(url) {},
     createCalendarEvent: function(params) {},

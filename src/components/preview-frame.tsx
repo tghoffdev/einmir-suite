@@ -247,6 +247,7 @@ export const PreviewFrame = forwardRef<PreviewFrameHandle, PreviewFrameProps>(
             width={width}
             height={height}
             style={{ border: "none", display: "block" }}
+            sandbox="allow-scripts allow-same-origin allow-forms"
             allow="autoplay; fullscreen; encrypted-media"
             onLoad={() => setHtml5Ready(true)}
           />

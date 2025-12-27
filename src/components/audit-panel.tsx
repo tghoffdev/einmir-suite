@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -82,43 +82,59 @@ export function AuditPanel({
   const [baseTag, setBaseTag] = useState(tag);
   const [macroValues, setMacroValues] = useState<Record<string, string>>({});
 
+  // Stabilize html5Macros to prevent re-renders when reference changes but content is same
+  const html5MacrosKeyRef = useRef<string>("");
+  const stableHtml5MacrosRef = useRef<DetectedMacro[]>([]);
+
+  // Create a key from macro names to detect actual changes
+  const html5MacrosKey = useMemo(() => {
+    return html5Macros.map(m => `${m.format}:${m.name}:${m.raw}`).join("|");
+  }, [html5Macros]);
+
+  // Only update the stable ref when content actually changes
+  if (html5MacrosKey !== html5MacrosKeyRef.current) {
+    html5MacrosKeyRef.current = html5MacrosKey;
+    stableHtml5MacrosRef.current = html5Macros;
+  }
+
   // Detect macros from the base tag + merge with HTML5 scanned macros
   const detectedMacros = useMemo(() => {
     const tagMacros = detectMacros(baseTag);
     // Merge and dedupe by name
     const macroMap = new Map<string, DetectedMacro>();
-    for (const m of [...tagMacros, ...html5Macros]) {
+    for (const m of [...tagMacros, ...stableHtml5MacrosRef.current]) {
       const key = `${m.format}:${m.name}`;
       if (!macroMap.has(key)) {
         macroMap.set(key, m);
       }
     }
     return Array.from(macroMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [baseTag, html5Macros]);
+  }, [baseTag, html5MacrosKey]);
 
-  // Check if a tag could be derived from baseTag by applying current macro values
-  const isDerivedFromBase = useCallback((newTag: string) => {
-    if (!baseTag || !newTag) return false;
-    // Apply current macro values to baseTag and see if it matches the new tag
+  // Ref to access macroValues without adding to effect dependencies
+  const macroValuesRef = useRef(macroValues);
+  macroValuesRef.current = macroValues;
+
+  // Update base tag only when a completely new tag is loaded (not when macros are applied)
+  // This effect should only run when tag or baseTag changes, NOT when macroValues changes
+  useEffect(() => {
+    if (!tag) {
+      if (baseTag !== "") {
+        setBaseTag("");
+      }
+      setMacroValues(prev => Object.keys(prev).length === 0 ? prev : {});
+      return;
+    }
+
+    // Check if this tag is derived from baseTag by applying current macro values
+    // Use ref to avoid dependency on macroValues
     let derived = baseTag;
-    for (const [macroRaw, value] of Object.entries(macroValues)) {
+    for (const [macroRaw, value] of Object.entries(macroValuesRef.current)) {
       if (value.trim()) {
         derived = derived.split(macroRaw).join(value);
       }
     }
-    return derived === newTag;
-  }, [baseTag, macroValues]);
-
-  // Update base tag only when a completely new tag is loaded (not when macros are applied)
-  useEffect(() => {
-    if (!tag) {
-      setBaseTag("");
-      setMacroValues({});
-      return;
-    }
-
-    // If the new tag is derived from applying macros to baseTag, preserve state
-    if (isDerivedFromBase(tag)) {
+    if (derived === tag) {
       return;
     }
 
@@ -139,7 +155,8 @@ export function AuditPanel({
       setMacroValues({});
       setLastTextModifiedTag(null);
     }
-  }, [tag, baseTag, isDerivedFromBase]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tag, baseTag]);
 
   const [activeTab, setActiveTab] = useState<"macros" | "text">("macros");
   const [showExport, setShowExport] = useState(false);
@@ -270,7 +287,7 @@ export function AuditPanel({
                 )}
               </TabsTrigger>
               <TabsTrigger value="text" className="flex-1 text-xs">
-                Text
+                Personalize
                 {textElements.length > 0 && (
                   <span className="ml-1.5 text-[10px] bg-foreground/10 px-1.5 py-0.5 rounded">
                     {textElements.length}
@@ -303,7 +320,7 @@ export function AuditPanel({
                   <div className="text-center py-6 text-foreground/40 text-sm">
                     <p>No macros detected</p>
                     <p className="text-xs mt-2 text-foreground/30">
-                      Paste a tag with macros like [CLICK_URL]
+                      Detects [MACRO], %%MACRO%%, {"{{macro}}"}, __MACRO__, etc.
                     </p>
                   </div>
                 ) : (
@@ -366,16 +383,16 @@ export function AuditPanel({
                 )}
                 {isCrossOrigin ? (
                   <div className="text-center py-6 text-foreground/40 text-sm">
-                    <p>Text editing unavailable</p>
+                    <p>Personalization unavailable</p>
                     <p className="text-xs mt-2 text-foreground/30">
                       External preview URLs are cross-origin
                     </p>
                   </div>
                 ) : textElements.length === 0 ? (
                   <div className="text-center py-6 text-foreground/40 text-sm">
-                    <p>No text elements found</p>
+                    <p>No editable text found</p>
                     <p className="text-xs mt-2 text-foreground/30">
-                      Load an ad tag to scan for text
+                      Load an ad to scan for text elements
                     </p>
                     {onRescan && (
                       <Button
@@ -419,8 +436,8 @@ export function AuditPanel({
                       </div>
                     </div>
 
-                    {/* Export Section - show if current modifications OR saved modified tag */}
-                    {(hasModifications || lastTextModifiedTag) && (
+                    {/* Export Section - show for tag-based content only (not HTML5) */}
+                    {!isHtml5 && (hasModifications || lastTextModifiedTag) && (
                       <div className="border border-border/50 rounded p-2 bg-foreground/5">
                         {!showExport ? (
                           <Button
@@ -495,6 +512,13 @@ export function AuditPanel({
                             )}
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* HTML5 info message - changes are live DOM edits */}
+                    {isHtml5 && hasModifications && (
+                      <div className="text-[10px] text-emerald-400/70 bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-1.5">
+                        Changes apply live to DOM. Click "Reload with changes" to persist through reload.
                       </div>
                     )}
 
