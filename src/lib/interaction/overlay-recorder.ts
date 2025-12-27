@@ -1,9 +1,9 @@
 /**
  * Overlay Event Recorder
  *
- * Records clicks by detecting when the iframe receives focus (window blur).
- * The overlay is purely visual and doesn't block any events.
- * This allows real clicks to pass through while we still record them.
+ * Uses a transparent overlay to capture mouse position and show visual feedback.
+ * The overlay intercepts mousedown to record the click and show a ripple,
+ * then immediately disables itself so the click passes through to the iframe.
  */
 
 import type {
@@ -28,26 +28,25 @@ export class OverlayRecorder {
   private startTime: number = 0;
   private isRecording: boolean = false;
   private overlay: HTMLDivElement | null = null;
+  private cursor: HTMLDivElement | null = null;
   private container: HTMLElement | null = null;
   private iframe: HTMLIFrameElement | null = null;
   private width: number = 0;
   private height: number = 0;
   private onEventCountChange?: (count: number) => void;
-
-  // Track last mouse position for click detection
-  private lastMouseX: number = 0;
-  private lastMouseY: number = 0;
-  private isMouseOverAd: boolean = false;
+  private reEnableTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Bound handlers for cleanup
-  private handleWindowBlur: () => void;
-  private handleMouseMove: (e: MouseEvent) => void;
-  private handleTouchStart: (e: TouchEvent) => void;
+  private boundMouseDown: (e: MouseEvent) => void;
+  private boundMouseMove: (e: MouseEvent) => void;
+  private boundMouseLeave: (e: MouseEvent) => void;
+  private boundTouchStart: (e: TouchEvent) => void;
 
   constructor() {
-    this.handleWindowBlur = this.onWindowBlur.bind(this);
-    this.handleMouseMove = this.onMouseMove.bind(this);
-    this.handleTouchStart = this.onTouchStart.bind(this);
+    this.boundMouseDown = this.onMouseDown.bind(this);
+    this.boundMouseMove = this.onMouseMove.bind(this);
+    this.boundMouseLeave = this.onMouseLeave.bind(this);
+    this.boundTouchStart = this.onTouchStart.bind(this);
   }
 
   /**
@@ -76,14 +75,11 @@ export class OverlayRecorder {
     this.events = [];
     this.startTime = performance.now();
 
-    // Create visual overlay (doesn't block events)
+    // Create the overlay
     this.createOverlay();
 
-    // Attach event listeners
-    this.attachEventListeners();
-
     this.isRecording = true;
-    console.log("[OverlayRecorder] Started recording");
+    console.log("[OverlayRecorder] Started recording with mousedown capture");
     return true;
   }
 
@@ -96,7 +92,12 @@ export class OverlayRecorder {
     }
 
     this.isRecording = false;
-    this.detachEventListeners();
+
+    if (this.reEnableTimeout) {
+      clearTimeout(this.reEnableTimeout);
+      this.reEnableTimeout = null;
+    }
+
     this.removeOverlay();
 
     console.log(`[OverlayRecorder] Stopped. Captured ${this.events.length} events`);
@@ -127,7 +128,7 @@ export class OverlayRecorder {
   private createOverlay(): void {
     if (!this.container || !this.iframe) return;
 
-    // Create overlay - pointer-events: none so it doesn't block clicks
+    // Create overlay - starts with pointer-events: auto to capture mousedown
     this.overlay = document.createElement("div");
     this.overlay.style.cssText = `
       position: absolute;
@@ -136,7 +137,8 @@ export class OverlayRecorder {
       right: 0;
       bottom: 0;
       z-index: 1000;
-      pointer-events: none;
+      cursor: none;
+      background: transparent;
       border: 3px solid #ef4444;
       box-sizing: border-box;
     `;
@@ -157,12 +159,31 @@ export class OverlayRecorder {
       display: flex;
       align-items: center;
       gap: 6px;
+      pointer-events: none;
     `;
     indicator.innerHTML = `
       <span style="width: 8px; height: 8px; background: white; border-radius: 50%; animation: pulse 1s infinite;"></span>
       REC
     `;
     this.overlay.appendChild(indicator);
+
+    // Create cursor element - visible circle that follows the mouse
+    this.cursor = document.createElement("div");
+    this.cursor.style.cssText = `
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      transition: opacity 0.1s ease;
+      box-shadow: 0 0 4px rgba(0, 0, 0, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.3);
+      z-index: 1001;
+    `;
+    this.overlay.appendChild(this.cursor);
 
     // Add animations
     const style = document.createElement("style");
@@ -172,18 +193,19 @@ export class OverlayRecorder {
         50% { opacity: 0.4; }
       }
       @keyframes clickRipple {
-        0% { transform: translate(-50%, -50%) scale(0.3); opacity: 1; }
+        0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
         100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; }
       }
     `;
     this.overlay.appendChild(style);
 
-    // Position container
+    // Position the container
     const containerStyle = getComputedStyle(this.container);
     if (containerStyle.position === "static") {
       this.container.style.position = "relative";
     }
 
+    // Append to ad container for correct positioning
     const adContainer = this.iframe.parentElement;
     if (adContainer) {
       adContainer.style.position = "relative";
@@ -191,75 +213,80 @@ export class OverlayRecorder {
     } else {
       this.container.appendChild(this.overlay);
     }
+
+    // Attach event listeners
+    this.overlay.addEventListener("mousedown", this.boundMouseDown);
+    this.overlay.addEventListener("mousemove", this.boundMouseMove);
+    this.overlay.addEventListener("mouseleave", this.boundMouseLeave);
+    this.overlay.addEventListener("touchstart", this.boundTouchStart, { passive: false });
   }
 
   private removeOverlay(): void {
     if (this.overlay) {
+      this.overlay.removeEventListener("mousedown", this.boundMouseDown);
+      this.overlay.removeEventListener("mousemove", this.boundMouseMove);
+      this.overlay.removeEventListener("mouseleave", this.boundMouseLeave);
+      this.overlay.removeEventListener("touchstart", this.boundTouchStart);
       this.overlay.remove();
       this.overlay = null;
     }
+    this.cursor = null;
     this.container = null;
     this.iframe = null;
   }
 
-  private attachEventListeners(): void {
-    // Track mouse position on document level
-    document.addEventListener("mousemove", this.handleMouseMove, true);
+  private onMouseDown(event: MouseEvent): void {
+    if (!this.isRecording || !this.overlay) return;
 
-    // Detect clicks via window blur (iframe receives focus when clicked)
-    window.addEventListener("blur", this.handleWindowBlur);
-
-    // Touch events - we can capture these on the container
-    this.container?.addEventListener("touchstart", this.handleTouchStart, { capture: true, passive: true });
-  }
-
-  private detachEventListeners(): void {
-    document.removeEventListener("mousemove", this.handleMouseMove, true);
-    window.removeEventListener("blur", this.handleWindowBlur);
-    this.container?.removeEventListener("touchstart", this.handleTouchStart, { capture: true });
-  }
-
-  private onMouseMove(event: MouseEvent): void {
-    if (!this.isRecording || !this.iframe) return;
-
-    const rect = this.iframe.getBoundingClientRect();
+    const rect = this.overlay.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
 
-    // Check if mouse is over the ad
-    this.isMouseOverAd = x >= 0 && y >= 0 && x <= this.width && y <= this.height;
+    // Record the click
+    const timestamp = performance.now() - this.startTime;
+    this.recordEvent("click", x, y, timestamp, event.button);
+    console.log(`[OverlayRecorder] Captured click at (${Math.round(x)}, ${Math.round(y)})`);
 
-    if (this.isMouseOverAd) {
-      this.lastMouseX = x;
-      this.lastMouseY = y;
+    // Show ripple effect immediately (will be visible in video)
+    this.showClickRipple(x, y);
+
+    // Immediately disable pointer-events so mouseup/click pass through to iframe
+    this.overlay.style.pointerEvents = "none";
+
+    // Re-enable after the click sequence completes
+    if (this.reEnableTimeout) {
+      clearTimeout(this.reEnableTimeout);
+    }
+    this.reEnableTimeout = setTimeout(() => {
+      if (this.overlay && this.isRecording) {
+        this.overlay.style.pointerEvents = "auto";
+      }
+    }, 150);
+  }
+
+  private onMouseMove(event: MouseEvent): void {
+    if (!this.cursor || !this.overlay) return;
+
+    const rect = this.overlay.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    // Update cursor position
+    this.cursor.style.left = `${x}px`;
+    this.cursor.style.top = `${y}px`;
+    this.cursor.style.opacity = "1";
+  }
+
+  private onMouseLeave(): void {
+    if (this.cursor) {
+      this.cursor.style.opacity = "0";
     }
   }
 
-  private onWindowBlur(): void {
-    if (!this.isRecording || !this.isMouseOverAd) return;
-
-    // Window blur when mouse is over ad = user clicked the iframe
-    const timestamp = performance.now() - this.startTime;
-    const x = this.lastMouseX;
-    const y = this.lastMouseY;
-
-    // Record click
-    this.recordEvent("click", x, y, timestamp);
-    console.log(`[OverlayRecorder] Captured click at (${Math.round(x)}, ${Math.round(y)})`);
-
-    // Show ripple effect
-    this.showClickRipple(x, y);
-
-    // Re-focus parent window after a brief delay so we can capture more clicks
-    setTimeout(() => {
-      window.focus();
-    }, 100);
-  }
-
   private onTouchStart(event: TouchEvent): void {
-    if (!this.isRecording || !this.iframe) return;
+    if (!this.isRecording || !this.overlay) return;
 
-    const rect = this.iframe.getBoundingClientRect();
+    const rect = this.overlay.getBoundingClientRect();
     const touch = event.touches[0];
     if (!touch) return;
 
@@ -280,7 +307,22 @@ export class OverlayRecorder {
 
     this.recordTouchEvent("touchstart", x, y, timestamp, touches);
     console.log(`[OverlayRecorder] Captured touch at (${Math.round(x)}, ${Math.round(y)})`);
+
+    // Show ripple
     this.showClickRipple(x, y);
+
+    // Disable pointer events so touch continues to iframe
+    this.overlay.style.pointerEvents = "none";
+
+    // Re-enable after touch
+    if (this.reEnableTimeout) {
+      clearTimeout(this.reEnableTimeout);
+    }
+    this.reEnableTimeout = setTimeout(() => {
+      if (this.overlay && this.isRecording) {
+        this.overlay.style.pointerEvents = "auto";
+      }
+    }, 300);
   }
 
   private showClickRipple(x: number, y: number): void {
@@ -291,18 +333,20 @@ export class OverlayRecorder {
       position: absolute;
       left: ${x}px;
       top: ${y}px;
-      width: 50px;
-      height: 50px;
-      background: rgba(255, 255, 255, 0.4);
-      border: 3px solid rgba(255, 255, 255, 0.9);
+      width: 40px;
+      height: 40px;
+      background: rgba(255, 255, 255, 0.5);
+      border: 3px solid rgba(255, 255, 255, 0.95);
       border-radius: 50%;
       pointer-events: none;
-      animation: clickRipple 0.5s ease-out forwards;
-      box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+      animation: clickRipple 0.4s ease-out forwards;
+      box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+      z-index: 1002;
     `;
     this.overlay.appendChild(ripple);
 
-    setTimeout(() => ripple.remove(), 500);
+    // Remove after animation
+    setTimeout(() => ripple.remove(), 400);
   }
 
   private recordEvent(
