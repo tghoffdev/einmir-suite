@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { analytics } from "@/lib/analytics";
 import type { AdSize } from "@/types";
 
 /**
@@ -80,6 +81,7 @@ export function SizeSelector({
     const val = parseInt(widthStr, 10);
     if (!isNaN(val) && val >= 50 && val <= 2000) {
       onWidthChange(val);
+      analytics.sizeChange(val, height, "manual");
     } else {
       // Reset to current valid value
       setWidthStr(String(width));
@@ -90,6 +92,7 @@ export function SizeSelector({
     const val = parseInt(heightStr, 10);
     if (!isNaN(val) && val >= 50 && val <= 2000) {
       onHeightChange(val);
+      analytics.sizeChange(width, val, "manual");
     } else {
       // Reset to current valid value
       setHeightStr(String(height));
@@ -107,6 +110,8 @@ export function SizeSelector({
   const handlePresetClick = (size: AdSize) => {
     onWidthChange(size.width);
     onHeightChange(size.height);
+    analytics.sizePresetClick(size.label);
+    analytics.sizeChange(size.width, size.height, "preset");
   };
 
   const isSelected = (size: AdSize) =>

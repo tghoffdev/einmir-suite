@@ -32,6 +32,7 @@ import {
 import { captureScreenshot, downloadScreenshot } from "@/lib/capture/screenshot";
 import { createZipArchive, downloadBlob, type ZipFile } from "@/lib/capture/zip";
 import { useProcessing } from "@/hooks/use-processing";
+import { analytics } from "@/lib/analytics";
 import type { AdSize, OutputFormat } from "@/types";
 import {
   registerServiceWorker,
@@ -118,6 +119,9 @@ export default function Home() {
   // Ref to resolve a promise when ad becomes ready (for reload-and-record)
   const adReadyResolverRef = useRef<(() => void) | null>(null);
 
+  // Ref to track recording start time for analytics
+  const recordingStartTimeRef = useRef<number>(0);
+
   // Refs to track current dimensions and format for recording (avoids stale closures)
   const dimensionsRef = useRef({ width, height });
   dimensionsRef.current = { width, height };
@@ -163,6 +167,8 @@ export default function Home() {
           timestamp: event.data.timestamp,
         };
         setMraidEvents((prev) => [...prev.slice(-9), newEvent]);
+        // Track MRAID event
+        analytics.mraidEvent(event.data.event, event.data.args?.length > 0);
         // Auto-remove after 5 seconds
         setTimeout(() => {
           setMraidEvents((prev) => prev.filter((e) => e.id !== newEvent.id));
@@ -213,6 +219,14 @@ export default function Home() {
         return;
       }
 
+      // Track upload
+      const fileCount = Object.keys(result.files).length;
+      const fileSize = Object.values(result.files).reduce(
+        (sum, f) => sum + (f.content?.length || 0),
+        0
+      );
+      analytics.html5Upload(fileSize, fileCount);
+
       setIsLoadingHtml5(true);
       try {
         // Clear any existing tag content
@@ -229,6 +243,7 @@ export default function Home() {
         setPreviewKey((k) => k + 1);
       } catch (error) {
         console.error("Failed to load HTML5 ad:", error);
+        analytics.error("html5_load", String(error));
       } finally {
         setIsLoadingHtml5(false);
       }
@@ -243,6 +258,10 @@ export default function Home() {
       hasHtml5Url: !!html5Url,
     });
     if (tagValue.trim()) {
+      // Track tag paste
+      const vendorInfo = detectVendor(tagValue.trim());
+      analytics.tagPaste(vendorInfo.platform, tagValue.trim().length);
+
       // Clear HTML5 content when loading a tag
       if (html5Url) {
         clearHtml5Ad();
@@ -342,6 +361,13 @@ export default function Home() {
 
   const handleAdReady = useCallback(() => {
     setIsAdReady(true);
+    // Track ad load
+    if (html5Url) {
+      analytics.html5Load(width, height);
+    } else if (loadedTag) {
+      const vendorInfo = detectVendor(loadedTag);
+      analytics.tagLoad(vendorInfo.platform, width, height);
+    }
     // If we're waiting for ad ready (reload-and-record), resolve the promise
     if (adReadyResolverRef.current) {
       adReadyResolverRef.current();
@@ -349,7 +375,7 @@ export default function Home() {
     }
     // Auto-scan for DCO text elements
     scanAd();
-  }, [scanAd]);
+  }, [scanAd, html5Url, loadedTag, width, height]);
 
   const handleResize = useCallback((newWidth: number, newHeight: number) => {
     setWidth(newWidth);
@@ -380,12 +406,17 @@ export default function Home() {
         height: currentHeight,
       });
       downloadScreenshot(result.blob, `screenshot-${currentWidth}x${currentHeight}-${Date.now()}.png`);
+      // Track screenshot
+      const vendor = loadedTag ? detectVendor(loadedTag).platform : "html5";
+      analytics.screenshotTaken(currentWidth, currentHeight, vendor);
+      analytics.exportDownload("png", result.blob.size);
     } catch (error) {
       console.error("Screenshot failed:", error);
+      analytics.error("screenshot", String(error));
     } finally {
       setIsStartingCapture(false);
     }
-  }, []);
+  }, [loadedTag]);
 
   const handleBatchScreenshot = useCallback(async () => {
     if (!previewContainerRef.current || batchSizes.length === 0) return;
@@ -464,20 +495,28 @@ export default function Home() {
       }
 
       await recorder.startRecording(cropConfig);
+      recordingStartTimeRef.current = Date.now();
+      analytics.recordingStart(recordingMode, width, height);
     } catch (error) {
       console.error("Failed to start recording:", error);
+      analytics.error("recording_start", String(error));
     } finally {
       setIsStartingCapture(false);
     }
-  }, [recorder, recordingMode]);
+  }, [recorder, recordingMode, width, height]);
 
   const handleStopRecording = useCallback(async () => {
     try {
-      await recorder.stopRecording();
+      const result = await recorder.stopRecording();
+      if (result) {
+        const durationMs = Date.now() - recordingStartTimeRef.current;
+        analytics.recordingStop(durationMs, outputFormat);
+      }
     } catch (error) {
       console.error("Failed to stop recording:", error);
+      analytics.error("recording_stop", String(error));
     }
-  }, [recorder]);
+  }, [recorder, outputFormat]);
 
   const handleReloadAndRecord = useCallback(async () => {
     if (!loadedTag && !html5Url) return;
@@ -533,6 +572,7 @@ export default function Home() {
 
       // Step 7: Start the recording now
       recorder.beginPreparedRecording();
+      recordingStartTimeRef.current = Date.now();
     } catch (error) {
       console.error("Failed to start reload-and-record:", error);
       setCountdown(null);

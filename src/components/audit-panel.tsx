@@ -19,6 +19,7 @@ import {
   generateModifiedTag,
 } from "@/lib/dco/scanner";
 import { Textarea } from "@/components/ui/textarea";
+import { analytics } from "@/lib/analytics";
 
 /** Editable macro with replacement value */
 export interface EditableMacro extends DetectedMacro {
@@ -161,6 +162,11 @@ export function AuditPanel({
   const handleMacroChange = useCallback((macro: DetectedMacro, value: string) => {
     setMacroValues(prev => ({ ...prev, [macro.raw]: value }));
 
+    // Track macro edit
+    if (value.trim()) {
+      analytics.macroEdit(macro.name);
+    }
+
     // For HTML5 content, also replace in DOM immediately
     if (isHtml5 && onMacroReplaceInDOM && value.trim()) {
       onMacroReplaceInDOM(macro, value);
@@ -185,8 +191,10 @@ export function AuditPanel({
 
   // Reload ad with macro changes applied
   const reloadWithChanges = useCallback(() => {
+    const macroCount = Object.values(macroValues).filter(v => v.trim()).length;
+    analytics.macroReload(macroCount);
     onReloadWithChanges?.(getModifiedTag());
-  }, [getModifiedTag, onReloadWithChanges]);
+  }, [getModifiedTag, onReloadWithChanges, macroValues]);
 
   // Check if any macros have values
   const hasMacroValues = Object.values(macroValues).some(v => v.trim());
@@ -201,6 +209,10 @@ export function AuditPanel({
     (elementId: string, newText: string) => {
       const element = textElements.find((el) => el.id === elementId);
       if (element) {
+        // Track text edit
+        if (newText !== element.originalText) {
+          analytics.textEdit(element.type);
+        }
         updateTextElement(element, newText);
         onTextElementsChange?.([...textElements]);
       }
@@ -374,6 +386,8 @@ export function AuditPanel({
                       // Save modified tag for export before reload
                       const result = generateModifiedTag(tag, textElements);
                       setLastTextModifiedTag(result.tag);
+                      // Track text reload
+                      analytics.textReload(textElements.length);
                       // Use text-specific reload that stores/re-applies DOM mods
                       onTextReloadWithChanges();
                     }}
