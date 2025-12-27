@@ -54,6 +54,8 @@ interface AuditPanelProps {
   onReloadWithChanges?: (modifiedTag: string) => void;
   /** Callback to reload the ad with text changes (stores and re-applies DOM mods) */
   onTextReloadWithChanges?: () => void;
+  /** Macros scanned from HTML5 iframe content */
+  html5Macros?: DetectedMacro[];
 }
 
 export function AuditPanel({
@@ -68,13 +70,25 @@ export function AuditPanel({
   onMacrosChange,
   onReloadWithChanges,
   onTextReloadWithChanges,
+  html5Macros = [],
 }: AuditPanelProps) {
   // Track the "base tag" for macro detection - the original tag before any macro replacements
   const [baseTag, setBaseTag] = useState(tag);
   const [macroValues, setMacroValues] = useState<Record<string, string>>({});
 
-  // Detect macros from the base tag (not the modified tag)
-  const detectedMacros = useMemo(() => detectMacros(baseTag), [baseTag]);
+  // Detect macros from the base tag + merge with HTML5 scanned macros
+  const detectedMacros = useMemo(() => {
+    const tagMacros = detectMacros(baseTag);
+    // Merge and dedupe by name
+    const macroMap = new Map<string, DetectedMacro>();
+    for (const m of [...tagMacros, ...html5Macros]) {
+      const key = `${m.format}:${m.name}`;
+      if (!macroMap.has(key)) {
+        macroMap.set(key, m);
+      }
+    }
+    return Array.from(macroMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [baseTag, html5Macros]);
 
   // Check if a tag could be derived from baseTag by applying current macro values
   const isDerivedFromBase = useCallback((newTag: string) => {

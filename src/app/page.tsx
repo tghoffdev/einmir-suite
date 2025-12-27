@@ -21,7 +21,7 @@ import { BackgroundColorPicker } from "@/components/background-color-picker";
 import { CaptureControls } from "@/components/capture-controls";
 import { AuditPanel, type MRAIDEvent } from "@/components/audit-panel";
 import { scanTextElements, updateTextElement, type TextElement } from "@/lib/dco/scanner";
-import { detectMacros } from "@/lib/macros/detector";
+import { detectMacros, scanIframeForMacros, type DetectedMacro } from "@/lib/macros/detector";
 import { detectVendor } from "@/lib/vendors";
 import {
   useRecorder,
@@ -80,6 +80,7 @@ export default function Home() {
   // Audit panel + DCO
   const [auditPanelOpen, setAuditPanelOpen] = useState(false);
   const [textElements, setTextElements] = useState<TextElement[]>([]);
+  const [html5Macros, setHtml5Macros] = useState<DetectedMacro[]>([]);
   // Store text modifications to re-apply after reload (originalText -> currentText)
   const pendingTextModsRef = useRef<Map<string, string>>(new Map());
   // Track which content we've already auto-opened audit panel for (to avoid re-opening on reload)
@@ -187,14 +188,15 @@ export default function Home() {
       return;
     }
 
-    const hasMacros = loadedTag ? detectMacros(loadedTag).length > 0 : false;
+    const hasTagMacros = loadedTag ? detectMacros(loadedTag).length > 0 : false;
+    const hasHtml5Macros = html5Macros.length > 0;
     const hasTextElements = textElements.length > 0;
 
-    if (hasMacros || hasTextElements) {
+    if (hasTagMacros || hasHtml5Macros || hasTextElements) {
       setAuditPanelOpen(true);
       autoOpenedForRef.current = contentKey;
     }
-  }, [loadedTag, html5Url, textElements]);
+  }, [loadedTag, html5Url, textElements, html5Macros]);
 
   // Update service worker config when dimensions change (for HTML5 content)
   useEffect(() => {
@@ -290,6 +292,7 @@ export default function Home() {
     setIsAdReady(false);
     setTagValue("");
     setTextElements([]); // Clear DCO text elements
+    setHtml5Macros([]); // Clear HTML5 macros
     autoOpenedForRef.current = null; // Reset so next content will auto-open
     // Also clear HTML5 content
     if (html5Url) {
@@ -299,7 +302,7 @@ export default function Home() {
     }
   }, [html5Url]);
 
-  // Scan ad DOM for text elements
+  // Scan ad DOM for text elements and macros
   const scanAd = useCallback(() => {
     const iframe = previewFrameRef.current?.getIframe();
     if (iframe) {
@@ -307,6 +310,11 @@ export default function Home() {
       setTimeout(() => {
         let elements = scanTextElements(iframe);
         console.log("[DCO] Scanned", elements.length, "text elements");
+
+        // Scan for HTML5 macros in iframe content
+        const macros = scanIframeForMacros(iframe);
+        console.log("[Macros] Scanned", macros.length, "macros from iframe");
+        setHtml5Macros(macros);
 
         // Check for pending modifications to re-apply
         if (pendingTextModsRef.current.size > 0) {
@@ -791,6 +799,7 @@ export default function Home() {
                 onMacrosChange={handleMacrosChange}
                 onReloadWithChanges={handleMacrosChange}
                 onTextReloadWithChanges={handleTextReloadWithChanges}
+                html5Macros={html5Macros}
               />
             </div>
           </div>

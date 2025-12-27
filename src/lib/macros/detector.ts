@@ -19,13 +19,15 @@ export type MacroFormat =
   | "bracket"      // [MACRO]
   | "double-percent" // %%MACRO%%
   | "dollar-brace" // ${MACRO}
-  | "double-brace" // {{MACRO}}
+  | "double-brace" // {{MACRO}} or {{macro}}
   | "double-bracket" // [[MACRO]]
   | "percent-brace" // %{MACRO}
   | "hash"         // #MACRO#
   | "underscore"   // __MACRO__
   | "exclaim"      // !MACRO!
-  | "at-brace";    // @{MACRO}
+  | "at-brace"     // @{MACRO}
+  | "clicktag"     // window.clickTag, window.clickTAG
+  | "queryparam";  // ?clickTag=, ?name=
 
 interface MacroPattern {
   format: MacroFormat;
@@ -52,11 +54,11 @@ const MACRO_PATTERNS: MacroPattern[] = [
     regex: /\$\{([A-Z][A-Z0-9_]{2,})\}/g,
     extract: (m) => m[1],
   },
-  // {{MACRO}} - Handlebars / Mustache style
+  // {{MACRO}} or {{macro}} - Handlebars / Mustache style (case insensitive)
   {
     format: "double-brace",
-    regex: /\{\{([A-Z][A-Z0-9_]{2,})\}\}/g,
-    extract: (m) => m[1],
+    regex: /\{\{([A-Za-z][A-Za-z0-9_]{1,})\}\}/g,
+    extract: (m) => m[1].toUpperCase(),
   },
   // [[MACRO]] - Some ad servers
   {
@@ -87,6 +89,18 @@ const MACRO_PATTERNS: MacroPattern[] = [
     format: "at-brace",
     regex: /@\{([A-Z][A-Z0-9_]{2,})\}/g,
     extract: (m) => m[1],
+  },
+  // window.clickTag / window.clickTAG - HTML5 bundle click tracking
+  {
+    format: "clicktag",
+    regex: /window\.(clickTag|clickTAG)\b/g,
+    extract: () => "CLICKTAG",
+  },
+  // ?clickTag= or ?name= - Query param based macros in HTML5
+  {
+    format: "queryparam",
+    regex: /[?&](clickTag|clicktag|name|city|offer|headline|body|cta|pill)=/gi,
+    extract: (m) => m[1].toUpperCase(),
   },
 ];
 
@@ -139,6 +153,15 @@ export const KNOWN_MACROS: Record<string, string> = {
   AD_ID: "Ad identifier",
   CAMPAIGN_ID: "Campaign identifier",
   LINE_ITEM_ID: "Line item identifier",
+
+  // HTML5 bundle macros
+  CLICKTAG: "Click tracking URL (HTML5)",
+  NAME: "Name/title text",
+  OFFER: "Offer/promo text",
+  HEADLINE: "Headline text",
+  BODY: "Body copy text",
+  CTA: "Call to action text",
+  PILL: "Pill/badge text",
 };
 
 /**
@@ -196,6 +219,31 @@ export function getFormatDisplay(format: MacroFormat): string {
     "underscore": "__...__",
     "exclaim": "!...!",
     "at-brace": "@{...}",
+    "clicktag": "window.clickTag",
+    "queryparam": "?param=",
   };
   return displays[format];
+}
+
+/**
+ * Scan HTML5 iframe content for macros
+ * This extracts all HTML and inline JS to detect bundle-level macros
+ */
+export function scanIframeForMacros(iframe: HTMLIFrameElement): DetectedMacro[] {
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) return [];
+
+    // Get all content: HTML + all script contents
+    const html = doc.documentElement?.outerHTML || "";
+    const scripts = Array.from(doc.querySelectorAll("script"))
+      .map(s => s.textContent || "")
+      .join("\n");
+
+    const content = html + "\n" + scripts;
+    return detectMacros(content);
+  } catch (e) {
+    console.warn("[MacroDetector] Failed to scan iframe:", e);
+    return [];
+  }
 }
