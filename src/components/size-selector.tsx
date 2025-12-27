@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -62,6 +63,39 @@ export function SizeSelector({
   batchSizes = [],
   onBatchSizesChange,
 }: SizeSelectorProps) {
+  // Local string state for inputs to allow free editing
+  const [widthStr, setWidthStr] = useState(String(width));
+  const [heightStr, setHeightStr] = useState(String(height));
+
+  // Sync local state when props change (e.g., from preset clicks)
+  useEffect(() => {
+    setWidthStr(String(width));
+  }, [width]);
+
+  useEffect(() => {
+    setHeightStr(String(height));
+  }, [height]);
+
+  const handleWidthBlur = () => {
+    const val = parseInt(widthStr, 10);
+    if (!isNaN(val) && val >= 50 && val <= 2000) {
+      onWidthChange(val);
+    } else {
+      // Reset to current valid value
+      setWidthStr(String(width));
+    }
+  };
+
+  const handleHeightBlur = () => {
+    const val = parseInt(heightStr, 10);
+    if (!isNaN(val) && val >= 50 && val <= 2000) {
+      onHeightChange(val);
+    } else {
+      // Reset to current valid value
+      setHeightStr(String(height));
+    }
+  };
+
   const handlePresetClick = (size: AdSize) => {
     onWidthChange(size.width);
     onHeightChange(size.height);
@@ -112,13 +146,9 @@ export function SizeSelector({
           <Input
             id="width"
             type="number"
-            value={width}
-            onChange={(e) => {
-              const val = Number(e.target.value);
-              if (val >= 50 && val <= 2000 && val !== width) {
-                onWidthChange(val);
-              }
-            }}
+            value={widthStr}
+            onChange={(e) => setWidthStr(e.target.value)}
+            onBlur={handleWidthBlur}
             className="w-20"
             min={50}
             max={2000}
@@ -132,13 +162,9 @@ export function SizeSelector({
           <Input
             id="height"
             type="number"
-            value={height}
-            onChange={(e) => {
-              const val = Number(e.target.value);
-              if (val >= 50 && val <= 2000 && val !== height) {
-                onHeightChange(val);
-              }
-            }}
+            value={heightStr}
+            onChange={(e) => setHeightStr(e.target.value)}
+            onBlur={handleHeightBlur}
             className="w-20"
             min={50}
             max={2000}
