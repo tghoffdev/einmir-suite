@@ -11,6 +11,7 @@ import type { ZipLoadResult } from "@/lib/html5/zip-loader";
  * TagInput Component
  *
  * Textarea for pasting raw MRAID ad tags, plus HTML5 zip upload.
+ * Includes toggle for bulk mode.
  */
 
 export type InputMode = "tag" | "html5";
@@ -25,6 +26,8 @@ interface TagInputProps {
   onSelectSampleTag: (tag: string, width: number, height: number) => void;
   onSelectSampleBundle: (path: string, width: number, height: number) => void;
   disabled?: boolean;
+  isBulkMode?: boolean;
+  onBulkModeChange?: (isBulk: boolean) => void;
 }
 
 export function TagInput({
@@ -37,18 +40,38 @@ export function TagInput({
   onSelectSampleTag,
   onSelectSampleBundle,
   disabled,
+  isBulkMode = false,
+  onBulkModeChange,
 }: TagInputProps) {
 
   return (
-    <Tabs value={inputMode} onValueChange={(v) => onInputModeChange(v as InputMode)}>
-      <TabsList className="w-full">
-        <TabsTrigger value="tag" className="flex-1">
-          Paste Tag
-        </TabsTrigger>
-        <TabsTrigger value="html5" className="flex-1">
-          Upload HTML5
-        </TabsTrigger>
-      </TabsList>
+    <div className="space-y-2">
+      {/* Bulk mode toggle */}
+      {onBulkModeChange && (
+        <div className="flex justify-end">
+          <Button
+            variant={isBulkMode ? "default" : "outline"}
+            size="sm"
+            onClick={() => onBulkModeChange(!isBulkMode)}
+            className="h-7 text-xs gap-1.5"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            {isBulkMode ? "Bulk Mode" : "Bulk"}
+          </Button>
+        </div>
+      )}
+
+      <Tabs value={inputMode} onValueChange={(v) => onInputModeChange(v as InputMode)}>
+        <TabsList className="w-full">
+          <TabsTrigger value="tag" className="flex-1">
+            Paste Tag
+          </TabsTrigger>
+          <TabsTrigger value="html5" className="flex-1">
+            Upload HTML5
+          </TabsTrigger>
+        </TabsList>
 
       <TabsContent value="tag" className="mt-3">
         <div className="space-y-2">
@@ -80,5 +103,6 @@ export function TagInput({
         <ZipUpload onLoad={onHtml5Load} disabled={disabled} />
       </TabsContent>
     </Tabs>
+    </div>
   );
 }

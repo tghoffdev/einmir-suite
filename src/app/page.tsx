@@ -32,7 +32,12 @@ import {
 import { captureScreenshot, downloadScreenshot } from "@/lib/capture/screenshot";
 import { createZipArchive, downloadBlob, type ZipFile } from "@/lib/capture/zip";
 import { generateProofPack, downloadProofPack, type ProofPackData } from "@/lib/capture/proof-pack";
+import { generateBulkProofPack, downloadBulkProofPack } from "@/lib/capture/bulk-proof-pack";
 import type { ProofCollectionState } from "@/components/audit-panel";
+import { BulkUpload } from "@/components/bulk-upload";
+import { BulkQueue } from "@/components/bulk-queue";
+import { BulkProgressModal } from "@/components/bulk-progress";
+import type { BatchItem, ExtractedZipInfo, BulkProgress } from "@/types/bulk";
 
 /**
  * Extract a frame from a video blob as a PNG screenshot
@@ -122,6 +127,13 @@ export default function Home() {
   const [html5EntryPoint, setHtml5EntryPoint] = useState<string | null>(null);
   const [swReady, setSwReady] = useState(false);
   const [isLoadingHtml5, setIsLoadingHtml5] = useState(false);
+
+  // Bulk mode state
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [bulkItems, setBulkItems] = useState<BatchItem[]>([]);
+  const [bulkExtractedZips, setBulkExtractedZips] = useState<Map<string, ExtractedZipInfo>>(new Map());
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
 
   // Preview settings
   const [backgroundColor, setBackgroundColor] = useState("#18181b");
@@ -756,6 +768,57 @@ export default function Home() {
       console.error("Failed to load sample bundle:", error);
     }
   }, [swReady]);
+
+  // Bulk mode handlers
+  const handleBulkQueue = useCallback((items: BatchItem[], extractedZips?: ExtractedZipInfo[]) => {
+    setBulkItems((prev) => [...prev, ...items]);
+    if (extractedZips) {
+      setBulkExtractedZips((prev) => {
+        const next = new Map(prev);
+        extractedZips.forEach((zip) => next.set(zip.itemId, zip));
+        return next;
+      });
+    }
+  }, []);
+
+  const handleBulkItemsChange = useCallback((items: BatchItem[]) => {
+    setBulkItems(items);
+  }, []);
+
+  const handleBulkClear = useCallback(() => {
+    setBulkItems([]);
+    setBulkExtractedZips(new Map());
+  }, []);
+
+  const handleBulkStart = useCallback(async () => {
+    if (bulkItems.length === 0) return;
+
+    setIsBulkProcessing(true);
+    const startTime = Date.now();
+
+    setBulkProgress({
+      phase: "preparing",
+      currentItem: 0,
+      totalItems: bulkItems.length,
+      currentItemName: bulkItems[0]?.name || "",
+      currentItemStatus: "Preparing...",
+      startTime,
+      estimatedTimeRemaining: bulkItems.length * 8 * 1000,
+      completedItems: [],
+      errors: [],
+    });
+
+    // For now, just show a message - full integration with processor hook TBD
+    // This is a placeholder for the actual bulk processing logic
+    setTimeout(() => {
+      setBulkProgress((prev) => prev ? { ...prev, phase: "error", currentItemStatus: "Bulk processing not yet fully implemented. Coming soon!" } : null);
+    }, 1000);
+  }, [bulkItems]);
+
+  const handleBulkCancel = useCallback(() => {
+    setIsBulkProcessing(false);
+    setBulkProgress(null);
+  }, []);
 
   // Handle text modifications reload - stores mods and reloads
   const handleTextReloadWithChanges = useCallback(() => {
@@ -1599,23 +1662,54 @@ export default function Home() {
             {/* Controls */}
             <div className="w-[380px] shrink-0 space-y-2 overflow-y-auto">
 
-              {/* Tag Input */}
+              {/* Tag Input / Bulk Upload */}
               <Card className={`py-2 gap-1 transition-all duration-300 ${highlightedSection === "content" ? "ring-2 ring-cyan-500/50 shadow-lg shadow-cyan-500/20" : ""}`}>
                 <CardHeader className="py-1 px-3">
-                  <CardTitle className="text-[10px] font-mono font-normal text-cyan-400/70 uppercase tracking-widest leading-none">Ad Content</CardTitle>
+                  <CardTitle className="text-[10px] font-mono font-normal text-cyan-400/70 uppercase tracking-widest leading-none">
+                    {isBulkMode ? "Bulk Upload" : "Ad Content"}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0 px-3 pb-3">
-                  <TagInput
-                    value={tagValue}
-                    onChange={setTagValue}
-                    onLoad={handleLoadTag}
-                    onHtml5Load={handleHtml5Load}
-                    inputMode={inputMode}
-                    onInputModeChange={setInputMode}
-                    onSelectSampleTag={handleSelectSampleTag}
-                    onSelectSampleBundle={handleSelectSampleBundle}
-                    disabled={false}
-                  />
+                  {isBulkMode ? (
+                    <div className="space-y-3">
+                      <BulkUpload
+                        onQueue={handleBulkQueue}
+                        disabled={isBulkProcessing}
+                        defaultWidth={width}
+                        defaultHeight={height}
+                      />
+                      <BulkQueue
+                        items={bulkItems}
+                        onItemsChange={handleBulkItemsChange}
+                        onStartProcessing={handleBulkStart}
+                        onClear={handleBulkClear}
+                        disabled={false}
+                        isProcessing={isBulkProcessing}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setIsBulkMode(false)}
+                        className="w-full text-xs"
+                      >
+                        Exit Bulk Mode
+                      </Button>
+                    </div>
+                  ) : (
+                    <TagInput
+                      value={tagValue}
+                      onChange={setTagValue}
+                      onLoad={handleLoadTag}
+                      onHtml5Load={handleHtml5Load}
+                      inputMode={inputMode}
+                      onInputModeChange={setInputMode}
+                      onSelectSampleTag={handleSelectSampleTag}
+                      onSelectSampleBundle={handleSelectSampleBundle}
+                      disabled={false}
+                      isBulkMode={isBulkMode}
+                      onBulkModeChange={setIsBulkMode}
+                    />
+                  )}
                 </CardContent>
               </Card>
 
@@ -1800,6 +1894,14 @@ export default function Home() {
         </div>
       </main>
 
+      {/* Bulk Progress Modal */}
+      {bulkProgress && (
+        <BulkProgressModal
+          progress={bulkProgress}
+          items={bulkItems}
+          onCancel={handleBulkCancel}
+        />
+      )}
     </div>
   );
 }
