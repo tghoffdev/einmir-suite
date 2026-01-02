@@ -683,15 +683,27 @@ export default function Home() {
       // Cross-origin, can't access
     }
 
+    // Use ref to get latest compliance data (avoids stale closure issues)
+    const currentData = complianceDataRef.current;
+    const tag = loadedTagRef.current;
+
+    // For inline tags, ensure we have file info
+    let files = currentData.files;
+    if (files.length === 0 && tag) {
+      const tagBytes = new Blob([tag]).size;
+      files = [{ path: "inline-tag.html", size: tagBytes, contentType: "text/html" }];
+    }
+
     const dataWithSource: ComplianceData = {
-      ...complianceData,
+      ...currentData,
+      files,
       sourceContent,
     };
 
-    complianceEngineRef.current.setDSP(selectedDSP);
+    complianceEngineRef.current.setDSP(selectedDSPRef.current);
     const result = complianceEngineRef.current.runChecks(dataWithSource);
     setComplianceResult(result);
-  }, [complianceData, selectedDSP]);
+  }, []);
 
   // Handle DSP change
   const handleDSPChange = useCallback((dsp: string) => {
@@ -1246,7 +1258,7 @@ export default function Home() {
           {/* Right Column - Preview */}
           <Card className={`flex flex-col h-full overflow-hidden transition-all duration-300 ${highlightedSection === "preview" ? "ring-2 ring-blue-500/50 shadow-lg shadow-blue-500/20" : ""}`}>
             {/* Actions Bar */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-border">
               <div className="flex items-center gap-2">
                 <Button
                   onClick={handleReload}
