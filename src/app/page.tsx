@@ -253,23 +253,35 @@ export default function Home() {
     });
   }, []);
 
-  // Track recent events for deduplication (type + timestamp within 100ms = duplicate)
-  const recentEventsRef = useRef<Map<string, number>>(new Map());
+  // Track recent events for deduplication
+  // Key: "eventType:timestampBucket" where bucket is timestamp rounded to 500ms
+  const recentEventKeysRef = useRef<Set<string>>(new Set());
+
+  // MRAID standard events that we capture via our bridge - skip from AD_EVENT to avoid dupes
+  const MRAID_STANDARD_EVENTS = new Set([
+    'ready', 'stateChange', 'viewableChange', 'open', 'close', 'expand', 
+    'resize', 'playVideo', 'storePicture', 'createCalendarEvent',
+    'window.open', 'anchor', 'pixel', 'beacon', 'fetch', 'xhr'
+  ]);
 
   // Listen for MRAID events, custom AD_EVENT events, and compliance data from iframe/service worker
   useEffect(() => {
-    // Helper to check for duplicate events (same type within 100ms)
+    // Helper to check for duplicate events (same type within 500ms time bucket)
     const isDuplicateEvent = (eventType: string, timestamp: number): boolean => {
-      const key = eventType;
-      const lastTime = recentEventsRef.current.get(key);
-      if (lastTime && Math.abs(timestamp - lastTime) < 100) {
-        return true; // Duplicate - same event type within 100ms
+      // Round timestamp to 500ms bucket for deduplication
+      const bucket = Math.floor(timestamp / 500) * 500;
+      const key = `${eventType}:${bucket}`;
+      
+      if (recentEventKeysRef.current.has(key)) {
+        return true; // Duplicate
       }
-      recentEventsRef.current.set(key, timestamp);
-      // Clean up old entries (keep map small)
-      if (recentEventsRef.current.size > 50) {
-        const entries = Array.from(recentEventsRef.current.entries());
-        entries.slice(0, 25).forEach(([k]) => recentEventsRef.current.delete(k));
+      
+      recentEventKeysRef.current.add(key);
+      
+      // Clean up old entries (keep set small)
+      if (recentEventKeysRef.current.size > 100) {
+        const entries = Array.from(recentEventKeysRef.current);
+        entries.slice(0, 50).forEach((k) => recentEventKeysRef.current.delete(k));
       }
       return false;
     };
@@ -309,7 +321,12 @@ export default function Home() {
         const timestamp = event.data.data?.time ? new Date(event.data.data.time).getTime() : Date.now();
         const eventType = event.data.event || "custom";
         
-        // Skip if duplicate (MRAID bridge might have already captured this)
+        // Skip MRAID standard events from AD_EVENT - we already capture these via our bridge
+        if (MRAID_STANDARD_EVENTS.has(eventType)) {
+          return;
+        }
+        
+        // Skip if duplicate
         if (isDuplicateEvent(eventType, timestamp)) {
           return;
         }
