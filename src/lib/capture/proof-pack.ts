@@ -74,7 +74,7 @@ export interface ProofPackResult {
 export interface ProofPackSummary {
   hasScreenshot: boolean;
   hasRecording: boolean;
-  complianceStatus: "pass" | "fail" | "warn" | "pending" | "none";
+  complianceStatus: "pass" | "fail" | "warn" | "pending" | "skipped" | "none";
   eventCount: number;
   macroCount: number;
   isPersonalized: boolean;
