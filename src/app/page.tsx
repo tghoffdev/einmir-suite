@@ -531,9 +531,10 @@ export default function Home() {
   const handleReload = useCallback(() => {
     if (loadedTag || html5Url) {
       setIsAdReady(false);
-      // Reset timing for fresh measurement
+      // Reset timing for fresh measurement, explicitly preserve files
       setComplianceData((prev) => ({
         ...prev,
+        files: prev.files, // Explicitly preserve files
         timing: { loadStart: Date.now() },
       }));
       setPreviewKey((k) => k + 1);
@@ -622,7 +623,7 @@ export default function Home() {
     // Auto-run compliance if flagged (from reload & recheck)
     if (autoRunComplianceRef.current) {
       autoRunComplianceRef.current = false;
-      // Defer to next tick so timing state is updated
+      // Defer to allow state to settle
       setTimeout(() => {
         const iframe = previewFrameRef.current?.getIframe();
         let sourceContent: string | undefined;
@@ -634,14 +635,23 @@ export default function Home() {
         // Use refs to get current values without dependency issues
         complianceEngineRef.current.setDSP(selectedDSPRef.current);
         const currentData = complianceDataRef.current;
+
+        // For inline tags, recalculate file size from the tag itself
+        let files = currentData.files;
+        if (files.length === 0 && loadedTag) {
+          const tagBytes = new Blob([loadedTag]).size;
+          files = [{ path: "inline-tag.html", size: tagBytes, contentType: "text/html" }];
+        }
+
         const data: ComplianceData = {
           ...currentData,
-          timing: { ...currentData.timing, mraidReady: Date.now() },
-          sourceContent,
+          files,
+          timing: { loadStart: currentData.timing.loadStart || Date.now(), mraidReady: Date.now() },
+          sourceContent: sourceContent || currentData.sourceContent,
         };
         const result = complianceEngineRef.current.runChecks(data);
         setComplianceResult(result);
-      }, 100);
+      }, 150);
     }
   }, [scanAd, html5Url, loadedTag, width, height]);
 
