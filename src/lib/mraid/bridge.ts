@@ -196,6 +196,7 @@ export function generateMRAIDBridge(options: MRAIDBridgeOptions): string {
       if (state === 'expanded') {
         state = 'default';
         mraid._fireEvent('stateChange', 'default');
+        mraid._notifyParent('stateChange', ['default']);
         mraid._notifyParent('close');
       }
     },
@@ -203,6 +204,7 @@ export function generateMRAIDBridge(options: MRAIDBridgeOptions): string {
       if (state === 'default') {
         state = 'expanded';
         mraid._fireEvent('stateChange', 'expanded');
+        mraid._notifyParent('stateChange', ['expanded']);
         mraid._notifyParent('expand', [url]);
       }
     },
@@ -256,12 +258,15 @@ export function generateMRAIDBridge(options: MRAIDBridgeOptions): string {
 
     // Fire ready event
     mraid._fireEvent('ready');
+    mraid._notifyParent('ready');
 
     // Fire stateChange event
     mraid._fireEvent('stateChange', 'default');
+    mraid._notifyParent('stateChange', ['default']);
 
     // Fire viewableChange event
     mraid._fireEvent('viewableChange', true);
+    mraid._notifyParent('viewableChange', [true]);
 
     console.log('[MRAID Mock] Events fired - state: default, viewable: true');
   }
@@ -304,6 +309,157 @@ export function generateMRAIDBridge(options: MRAIDBridgeOptions): string {
   }, true);
 
   console.log('[MRAID Mock] Initialized');
+
+  // Intercept console.log to forward tagged events to parent
+  // Looks for [AD_EVENT] prefix in log messages
+  var originalConsoleLog = console.log;
+  console.log = function() {
+    // Forward to original console
+    originalConsoleLog.apply(console, arguments);
+    
+    // Check for [AD_EVENT] tagged messages
+    if (arguments.length > 0 && typeof arguments[0] === 'string' && arguments[0] === '[AD_EVENT]') {
+      var eventName = arguments[1] || 'console';
+      var eventData = arguments[2] || null;
+      try {
+        window.parent.postMessage({
+          type: 'mraid-event',
+          event: eventName,
+          args: eventData ? [eventData] : [],
+          timestamp: Date.now()
+        }, '*');
+      } catch (e) {
+        // Ignore cross-origin errors
+      }
+    }
+  };
+
+  // ============================================================
+  // Network Request Interception for Tracking
+  // ============================================================
+
+  // Helper to check if URL looks like a tracking pixel
+  function isTrackingUrl(url) {
+    if (!url) return false;
+    var trackingPatterns = [
+      /impression/i, /pixel/i, /track/i, /beacon/i, /analytics/i,
+      /click/i, /view/i, /event/i, /log/i, /collect/i, /ping/i,
+      /1x1/i, /spacer/i, /clear\\.gif/i, /blank\\.gif/i
+    ];
+    return trackingPatterns.some(function(p) { return p.test(url); });
+  }
+
+  // Intercept Image constructor for tracking pixels
+  var OriginalImage = window.Image;
+  window.Image = function(width, height) {
+    var img = new OriginalImage(width, height);
+    var originalSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src') ||
+                                 Object.getOwnPropertyDescriptor(img.__proto__, 'src');
+    
+    Object.defineProperty(img, 'src', {
+      get: function() {
+        return originalSrcDescriptor ? originalSrcDescriptor.get.call(this) : this.getAttribute('src');
+      },
+      set: function(value) {
+        // Check if this is a tracking pixel (1x1 or tracking URL patterns)
+        var isPixel = (width === 1 && height === 1) || 
+                      (this.width === 1 && this.height === 1) ||
+                      isTrackingUrl(value);
+        
+        if (isPixel && value) {
+          mraid._notifyParent('pixel', [value, 'image']);
+        }
+        
+        if (originalSrcDescriptor && originalSrcDescriptor.set) {
+          originalSrcDescriptor.set.call(this, value);
+        } else {
+          this.setAttribute('src', value);
+        }
+      },
+      configurable: true
+    });
+    
+    return img;
+  };
+  window.Image.prototype = OriginalImage.prototype;
+
+  // Intercept navigator.sendBeacon for beacon tracking
+  if (navigator.sendBeacon) {
+    var originalSendBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function(url, data) {
+      mraid._notifyParent('beacon', [url, data ? 'with data' : 'no data']);
+      return originalSendBeacon(url, data);
+    };
+  }
+
+  // Intercept fetch for POST requests (likely tracking)
+  var originalFetch = window.fetch;
+  window.fetch = function(input, init) {
+    var url = typeof input === 'string' ? input : (input.url || '');
+    var method = (init && init.method) || 'GET';
+    
+    // Only log POST requests or tracking URLs
+    if (method.toUpperCase() === 'POST' || isTrackingUrl(url)) {
+      mraid._notifyParent('fetch', [url, method]);
+    }
+    
+    return originalFetch.apply(window, arguments);
+  };
+
+  // Intercept XMLHttpRequest for POST requests
+  var OriginalXHR = window.XMLHttpRequest;
+  window.XMLHttpRequest = function() {
+    var xhr = new OriginalXHR();
+    var method = 'GET';
+    var url = '';
+    
+    var originalOpen = xhr.open;
+    xhr.open = function(m, u) {
+      method = m;
+      url = u;
+      return originalOpen.apply(xhr, arguments);
+    };
+    
+    var originalSend = xhr.send;
+    xhr.send = function(data) {
+      // Only log POST requests or tracking URLs
+      if (method.toUpperCase() === 'POST' || isTrackingUrl(url)) {
+        mraid._notifyParent('xhr', [url, method]);
+      }
+      return originalSend.apply(xhr, arguments);
+    };
+    
+    return xhr;
+  };
+  window.XMLHttpRequest.prototype = OriginalXHR.prototype;
+
+  // Watch for dynamically added tracking images via MutationObserver
+  if (typeof MutationObserver !== 'undefined') {
+    var observer = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        mutation.addedNodes.forEach(function(node) {
+          if (node.tagName === 'IMG') {
+            var src = node.src || node.getAttribute('src');
+            var w = node.width || node.getAttribute('width');
+            var h = node.height || node.getAttribute('height');
+            // Check for 1x1 pixels or tracking URLs
+            if ((w == 1 && h == 1) || isTrackingUrl(src)) {
+              mraid._notifyParent('pixel', [src, 'dom']);
+            }
+          }
+        });
+      });
+    });
+    
+    // Start observing after DOM is ready
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', function() {
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
+    }
+  }
 
 })();
 `;

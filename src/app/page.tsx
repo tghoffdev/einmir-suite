@@ -31,6 +31,53 @@ import {
 } from "@/hooks/use-recorder";
 import { captureScreenshot, downloadScreenshot } from "@/lib/capture/screenshot";
 import { createZipArchive, downloadBlob, type ZipFile } from "@/lib/capture/zip";
+import { generateProofPack, downloadProofPack, type ProofPackData } from "@/lib/capture/proof-pack";
+import type { ProofCollectionState } from "@/components/audit-panel";
+
+/**
+ * Extract a frame from a video blob as a PNG screenshot
+ */
+async function extractFrameFromVideo(videoBlob: Blob, width: number, height: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    
+    const url = URL.createObjectURL(videoBlob);
+    video.src = url;
+    
+    video.onloadeddata = () => {
+      // Seek to 1 second in (or end if shorter)
+      video.currentTime = Math.min(1, video.duration * 0.5);
+    };
+    
+    video.onseeked = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d")!;
+      
+      // Draw the video frame to canvas
+      ctx.drawImage(video, 0, 0, width, height);
+      
+      canvas.toBlob((blob) => {
+        URL.revokeObjectURL(url);
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error("Failed to create blob from canvas"));
+        }
+      }, "image/png");
+    };
+    
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load video"));
+    };
+    
+    video.load();
+  });
+}
 import { useProcessing } from "@/hooks/use-processing";
 import { analytics } from "@/lib/analytics";
 import type { AdSize, OutputFormat } from "@/types";
@@ -106,6 +153,14 @@ export default function Home() {
   const [html5Macros, setHtml5Macros] = useState<DetectedMacro[]>([]);
   // Store text modifications to re-apply after reload (originalText -> currentText)
   const pendingTextModsRef = useRef<Map<string, string>>(new Map());
+  
+  // Proof collection state
+  const [proofCollectionState, setProofCollectionState] = useState<ProofCollectionState>("idle");
+  const proofRecordingBlobRef = useRef<Blob | null>(null);
+  const proofStartTimeRef = useRef<number>(0);
+  
+  // Track original tag before any fixes are applied (for proof pack)
+  const originalTagRef = useRef<string | null>(null);
   // Track which content we've already auto-opened audit panel for (to avoid re-opening on reload)
   const autoOpenedForRef = useRef<string | null>(null);
 
@@ -162,9 +217,17 @@ export default function Home() {
   const loadedTagRef = useRef(loadedTag);
   loadedTagRef.current = loadedTag;
 
+  // Track if we're collecting proof (to skip auto-download)
+  const isCollectingProofRef = useRef(false);
+
   // Recording hook - use ref for dimensions to avoid stale closure
   const recorder = useRecorder({
     onRecordingComplete: async (blob) => {
+      // Skip auto-download if we're collecting proof (proof pack handles its own export)
+      if (isCollectingProofRef.current) {
+        return;
+      }
+
       const { width: w, height: h } = dimensionsRef.current;
       const format = outputFormatRef.current;
       const timestamp = Date.now();
@@ -190,15 +253,43 @@ export default function Home() {
     });
   }, []);
 
-  // Listen for MRAID events and compliance data from iframe/service worker
+  // Track recent events for deduplication (type + timestamp within 100ms = duplicate)
+  const recentEventsRef = useRef<Map<string, number>>(new Map());
+
+  // Listen for MRAID events, custom AD_EVENT events, and compliance data from iframe/service worker
   useEffect(() => {
+    // Helper to check for duplicate events (same type within 100ms)
+    const isDuplicateEvent = (eventType: string, timestamp: number): boolean => {
+      const key = eventType;
+      const lastTime = recentEventsRef.current.get(key);
+      if (lastTime && Math.abs(timestamp - lastTime) < 100) {
+        return true; // Duplicate - same event type within 100ms
+      }
+      recentEventsRef.current.set(key, timestamp);
+      // Clean up old entries (keep map small)
+      if (recentEventsRef.current.size > 50) {
+        const entries = Array.from(recentEventsRef.current.entries());
+        entries.slice(0, 25).forEach(([k]) => recentEventsRef.current.delete(k));
+      }
+      return false;
+    };
+
     const handleMessage = (event: MessageEvent) => {
+      // Handle MRAID bridge events
       if (event.data?.type === "mraid-event") {
+        const timestamp = event.data.timestamp || Date.now();
+        const eventType = event.data.event;
+        
+        // Skip if duplicate
+        if (isDuplicateEvent(eventType, timestamp)) {
+          return;
+        }
+
         const newEvent: MRAIDEvent = {
-          id: `${event.data.timestamp}-${Math.random().toString(36).slice(2)}`,
-          type: event.data.event,
+          id: `${timestamp}-${Math.random().toString(36).slice(2)}`,
+          type: eventType,
           args: event.data.args,
-          timestamp: event.data.timestamp,
+          timestamp,
         };
         // Keep last 100 events for history (persistent - no auto-removal)
         setMraidEvents((prev) => [...prev.slice(-99), newEvent]);
@@ -211,6 +302,26 @@ export default function Home() {
         } else if (event.data.event === "close" && formatType === "expandable") {
           setIsExpanded(false);
         }
+      }
+
+      // Handle custom AD_EVENT postMessages from ad tags (e.g., custom event logging)
+      if (event.data?.type === "AD_EVENT") {
+        const timestamp = event.data.data?.time ? new Date(event.data.data.time).getTime() : Date.now();
+        const eventType = event.data.event || "custom";
+        
+        // Skip if duplicate (MRAID bridge might have already captured this)
+        if (isDuplicateEvent(eventType, timestamp)) {
+          return;
+        }
+
+        const newEvent: MRAIDEvent = {
+          id: `${timestamp}-${Math.random().toString(36).slice(2)}`,
+          type: eventType,
+          args: event.data.data ? [event.data.data] : [],
+          timestamp,
+        };
+        setMraidEvents((prev) => [...prev.slice(-99), newEvent]);
+        analytics.mraidEvent(event.data.event || "custom", !!event.data.data);
       }
 
       // Handle compliance file data from service worker
@@ -229,6 +340,80 @@ export default function Home() {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [formatType]);
+
+  // PerformanceObserver to capture network requests from cross-origin iframes (like Celtra)
+  // This uses the Resource Timing API which can see all resource loads on the page
+  useEffect(() => {
+    // Track URLs we've already logged to avoid duplicates
+    const seenUrls = new Set<string>();
+    
+    // Helper to check if URL looks like tracking
+    const isTrackingUrl = (url: string): boolean => {
+      const patterns = [
+        /impression/i, /pixel/i, /track/i, /beacon/i, /analytics/i,
+        /click/i, /view/i, /event/i, /collect/i, /ping/i,
+        /1x1/i, /spacer/i, /\.gif\?/i, /\.png\?.*cb=/i,
+        /doubleclick/i, /adsrvr/i, /adnxs/i, /criteo/i, /taboola/i,
+        /outbrain/i, /moat/i, /ias.*\.com/i, /doubleverify/i
+      ];
+      return patterns.some(p => p.test(url));
+    };
+
+    const handleResourceEntry = (entry: PerformanceResourceTiming) => {
+      const url = entry.name;
+      
+      // Skip if already seen, or not tracking-related
+      if (seenUrls.has(url)) return;
+      if (!isTrackingUrl(url)) return;
+      
+      // Skip same-origin requests (already captured by MRAID bridge)
+      try {
+        const urlObj = new URL(url);
+        if (urlObj.origin === window.location.origin) return;
+      } catch {
+        return;
+      }
+      
+      seenUrls.add(url);
+      
+      // Determine event type from initiator
+      let eventType = 'network';
+      if (entry.initiatorType === 'img' || entry.initiatorType === 'image') {
+        eventType = 'pixel';
+      } else if (entry.initiatorType === 'fetch' || entry.initiatorType === 'xmlhttprequest') {
+        eventType = entry.initiatorType;
+      } else if (entry.initiatorType === 'beacon') {
+        eventType = 'beacon';
+      } else if (entry.initiatorType === 'script') {
+        eventType = 'script';
+      }
+      
+      const newEvent: MRAIDEvent = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: eventType,
+        args: [url, `via ${entry.initiatorType}`],
+        timestamp: performance.timeOrigin + entry.startTime,
+      };
+      
+      setMraidEvents((prev) => [...prev.slice(-99), newEvent]);
+    };
+
+    // Process existing entries
+    const existingEntries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+    existingEntries.forEach(handleResourceEntry);
+
+    // Observe new entries
+    const observer = new PerformanceObserver((list) => {
+      const entries = list.getEntries() as PerformanceResourceTiming[];
+      entries.forEach(handleResourceEntry);
+    });
+
+    observer.observe({ type: 'resource', buffered: true });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [loadedTag, html5Url]); // Re-run when content changes to reset seenUrls
 
   // Clear MRAID events and compliance result when tag changes
   // (complianceData is set by the load handlers, not cleared here)
@@ -268,7 +453,8 @@ export default function Home() {
     }));
   }, [mraidEvents]);
 
-  // Auto-open audit panel on initial load (not reload) when macros or text exist
+  // Auto-open audit panel on initial load (not reload) when content is loaded
+  // This ensures Collect Proof and compliance are always accessible
   useEffect(() => {
     // Create a content identity key
     const contentKey = loadedTag || html5Url || null;
@@ -278,15 +464,10 @@ export default function Home() {
       return;
     }
 
-    const hasTagMacros = loadedTag ? detectMacros(loadedTag).length > 0 : false;
-    const hasHtml5Macros = html5Macros.length > 0;
-    const hasTextElements = textElements.length > 0;
-
-    if (hasTagMacros || hasHtml5Macros || hasTextElements) {
-      setAuditPanelOpen(true);
-      autoOpenedForRef.current = contentKey;
-    }
-  }, [loadedTag, html5Url, textElements, html5Macros]);
+    // Always auto-open when content is loaded for easy access to Collect Proof
+    setAuditPanelOpen(true);
+    autoOpenedForRef.current = contentKey;
+  }, [loadedTag, html5Url]);
 
   // Update service worker config when dimensions change (for HTML5 content)
   useEffect(() => {
@@ -316,6 +497,7 @@ export default function Home() {
         // Clear any existing tag content
         setLoadedTag(null);
         setIsAdReady(false);
+        originalTagRef.current = null; // Clear original tag when loading HTML5
 
         // Set compliance data for HTML5 bundle
         // Reset timing completely - don't preserve old mraidReady from previous load
@@ -406,6 +588,13 @@ export default function Home() {
       const isReload = loadedTag === trimmedTag;
       setLoadedTag(trimmedTag);
       setIsAdReady(false);
+      
+      // Save the original tag ONLY on first load (not when reloading after a fix)
+      // This ensures we capture the pre-fix version for proof packs
+      if (!isReload) {
+        originalTagRef.current = trimmedTag;
+      }
+      
       if (isReload) {
         setPreviewKey((k) => k + 1);
       }
@@ -421,6 +610,17 @@ export default function Home() {
     // No need to increment previewKey
     setLoadedTag(modifiedTag);
     setIsAdReady(false);
+    
+    // Also update compliance data with new source content
+    // This is critical for click macro fix detection
+    const tagBytes = new Blob([modifiedTag]).size;
+    setComplianceData({
+      files: [{ path: "inline-tag.html", size: tagBytes, contentType: "text/html" }],
+      timing: { loadStart: Date.now() },
+      clicks: [],
+      pixels: [],
+      sourceContent: modifiedTag,
+    });
   }, []);
 
   // Handle sample tag selection from sample browser
@@ -550,6 +750,7 @@ export default function Home() {
     setTextElements([]); // Clear DCO text elements
     setHtml5Macros([]); // Clear HTML5 macros
     autoOpenedForRef.current = null; // Reset so next content will auto-open
+    originalTagRef.current = null; // Clear original tag for proof pack
     // Also clear HTML5 content
     if (html5Url) {
       clearHtml5Ad();
@@ -697,7 +898,9 @@ export default function Home() {
     const dataWithSource: ComplianceData = {
       ...currentData,
       files,
-      sourceContent,
+      // For cross-origin iframes, fall back to sourceContent from complianceData
+      // (which was set from the tag when loaded or fixed)
+      sourceContent: sourceContent || currentData.sourceContent,
     };
 
     complianceEngineRef.current.setDSP(selectedDSPRef.current);
@@ -917,6 +1120,176 @@ export default function Home() {
       setIsStartingCapture(false);
     }
   }, [loadedTag, html5Url, recorder, recordingMode, textElements]);
+
+  // Collect Proof workflow - runs compliance, captures screenshot, optionally records, bundles proof pack
+  const handleCollectProof = useCallback(async () => {
+    if (!loadedTag && !html5Url) return;
+    if (proofCollectionState !== "idle") return;
+
+    proofStartTimeRef.current = Date.now();
+    proofRecordingBlobRef.current = null;
+    isCollectingProofRef.current = true; // Prevent auto-download of recording
+
+    // Capture personalization state BEFORE any reload
+    const capturedTextChanges = textElements
+      .filter(el => el.currentText !== el.originalText)
+      .map(el => ({
+        original: el.originalText,
+        current: el.currentText,
+        type: el.type,
+      }));
+
+    // Store text modifications for re-application after reload
+    textElements.forEach(el => {
+      if (el.currentText !== el.originalText) {
+        pendingTextModsRef.current.set(el.originalText, el.currentText);
+      }
+    });
+
+    try {
+      // Step 1: Run compliance checks
+      setProofCollectionState("checking");
+      handleRunCompliance();
+      
+      // Wait a moment for compliance to complete
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Step 2: Prepare for recording
+      setProofCollectionState("recording");
+      
+      let cropConfig: CropConfig | null = null;
+      if (previewFrameRef.current) {
+        cropConfig = {
+          element: () => previewFrameRef.current?.getContainer() ?? null,
+          width: () => dimensionsRef.current.width,
+          height: () => dimensionsRef.current.height,
+        };
+      }
+
+      // Request screen capture permission
+      await recorder.prepareRecording(cropConfig);
+
+      // Quick countdown (2 seconds for proof)
+      for (let i = 2; i >= 1; i--) {
+        setCountdown(i);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      setCountdown(null);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Reload and wait for ad ready
+      const adReadyPromise = new Promise<void>((resolve) => {
+        adReadyResolverRef.current = resolve;
+      });
+      setIsAdReady(false);
+      setPreviewKey((k) => k + 1);
+      await adReadyPromise;
+      
+      // Let ad fully render
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      // Start recording for 3 seconds
+      recorder.beginPreparedRecording();
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      
+      // Stop and get the recording blob
+      let recordingBlob = await recorder.stopRecording();
+
+      // Step 3: Process and bundle
+      setProofCollectionState("processing");
+
+      // Convert to MP4 if that's the selected format
+      let finalRecordingFormat: "webm" | "mp4" = "webm";
+      if (recordingBlob && outputFormat === "mp4") {
+        try {
+          recordingBlob = await processing.processVideo(recordingBlob, "mp4");
+          finalRecordingFormat = "mp4";
+        } catch (err) {
+          console.warn("MP4 conversion failed, using WebM:", err);
+        }
+      }
+      proofRecordingBlobRef.current = recordingBlob;
+
+      // Extract a frame from the recording as screenshot (avoids second screen capture prompt)
+      // Note: Use original WebM blob for frame extraction if we converted to MP4
+      let screenshotBlob: Blob | undefined;
+      if (recordingBlob) {
+        try {
+          screenshotBlob = await extractFrameFromVideo(recordingBlob, dimensionsRef.current.width, dimensionsRef.current.height);
+        } catch (err) {
+          console.warn("Frame extraction failed:", err);
+        }
+      }
+
+      // Get detected macros
+      const macros = loadedTag ? detectMacros(loadedTag) : html5Macros;
+
+      // Get vendor info
+      const vendorInfo = loadedTag ? detectVendor(loadedTag) : null;
+
+      // Determine if tag was modified (fix applied)
+      const originalTag = originalTagRef.current ?? loadedTag;
+      const currentTag = loadedTag;
+      const wasModified = originalTag !== currentTag;
+
+      // Build proof pack data
+      const proofData: ProofPackData = {
+        screenshot: screenshotBlob,
+        recording: proofRecordingBlobRef.current ?? undefined,
+        recordingFormat: finalRecordingFormat,
+        compliance: complianceResult,
+        events: mraidEvents,
+        macros,
+        originalTag: originalTag ?? undefined,
+        modifiedTag: wasModified ? (currentTag ?? undefined) : undefined,
+        textChanges: capturedTextChanges.length > 0 ? capturedTextChanges : undefined,
+        metadata: {
+          timestamp: new Date().toLocaleString(),
+          timestampISO: new Date().toISOString(),
+          width: dimensionsRef.current.width,
+          height: dimensionsRef.current.height,
+          dsp: selectedDSP,
+          vendor: vendorInfo?.platform,
+          version: "1.0.0",
+          collectionDurationMs: Date.now() - proofStartTimeRef.current,
+        },
+      };
+
+      // Generate and download proof pack
+      const proofPack = await generateProofPack(proofData);
+      downloadProofPack(proofPack);
+
+      setProofCollectionState("complete");
+      
+      // Reset to idle after a moment
+      setTimeout(() => {
+        setProofCollectionState("idle");
+        isCollectingProofRef.current = false;
+      }, 2000);
+
+    } catch (error) {
+      console.error("Proof collection failed:", error);
+      setProofCollectionState("error");
+      setCountdown(null);
+      isCollectingProofRef.current = false;
+      
+      // Reset to idle after showing error
+      setTimeout(() => {
+        setProofCollectionState("idle");
+      }, 3000);
+    }
+  }, [
+    loadedTag, 
+    html5Url, 
+    proofCollectionState, 
+    handleRunCompliance, 
+    recorder, 
+    outputFormat,
+    complianceResult,
+    mraidEvents,
+    html5Macros,
+    selectedDSP,
+  ]);
 
   // Helper to get the iframe element from the preview
   const getPreviewIframe = useCallback((): HTMLIFrameElement | null => {
@@ -1251,6 +1624,8 @@ export default function Home() {
                 selectedDSP={selectedDSP}
                 onDSPChange={handleDSPChange}
                 hasContent={!!(loadedTag || html5Url)}
+                onCollectProof={handleCollectProof}
+                proofCollectionState={proofCollectionState}
               />
             </div>
           </div>

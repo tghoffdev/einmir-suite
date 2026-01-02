@@ -37,6 +37,15 @@ export interface MRAIDEvent {
   timestamp: number;
 }
 
+/** Proof collection state */
+export type ProofCollectionState = 
+  | "idle" 
+  | "checking" 
+  | "recording" 
+  | "processing" 
+  | "complete" 
+  | "error";
+
 interface AuditPanelProps {
   tag: string;
   open: boolean;
@@ -75,6 +84,10 @@ interface AuditPanelProps {
   onDSPChange?: (dsp: string) => void;
   /** Whether there is content loaded */
   hasContent?: boolean;
+  /** Trigger proof collection workflow */
+  onCollectProof?: () => void;
+  /** Current proof collection state */
+  proofCollectionState?: ProofCollectionState;
 }
 
 export function AuditPanel({
@@ -98,6 +111,8 @@ export function AuditPanel({
   selectedDSP = "generic",
   onDSPChange,
   hasContent = false,
+  onCollectProof,
+  proofCollectionState = "idle",
 }: AuditPanelProps) {
   // Track the "base tag" for macro detection - the original tag before any macro replacements
   const [baseTag, setBaseTag] = useState(tag);
@@ -294,10 +309,66 @@ export function AuditPanel({
       >
         <div className="w-[320px] h-full border-l border-border bg-background flex flex-col relative">
           {/* Header */}
-          <div className="px-3 py-2 border-b border-border">
+          <div className="px-3 py-2 border-b border-border flex items-center justify-between">
             <span className="text-[10px] font-mono font-normal text-emerald-400/70 uppercase tracking-widest">
               Audit
             </span>
+            <div className="flex items-center gap-1">
+              {/* Collect Proof Button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onCollectProof}
+                disabled={!hasContent || proofCollectionState !== "idle"}
+                className={`h-6 px-2 text-[10px] ${
+                  proofCollectionState !== "idle" 
+                    ? "text-cyan-400" 
+                    : "text-foreground/50 hover:text-foreground"
+                }`}
+              >
+                {proofCollectionState === "idle" ? (
+                  <>
+                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Collect Proof
+                  </>
+                ) : proofCollectionState === "checking" ? (
+                  <>
+                    <svg className="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Checking...
+                  </>
+                ) : proofCollectionState === "recording" ? (
+                  <>
+                    <span className="w-2 h-2 mr-1.5 rounded-full bg-red-500 animate-pulse" />
+                    Recording...
+                  </>
+                ) : proofCollectionState === "processing" ? (
+                  <>
+                    <svg className="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Processing...
+                  </>
+                ) : proofCollectionState === "complete" ? (
+                  <>
+                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Done!
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Error
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
           {/* Tabs */}
@@ -611,6 +682,11 @@ export function AuditPanel({
                 selectedDSP={selectedDSP}
                 onDSPChange={onDSPChange}
                 hasContent={hasContent}
+                currentTag={tag}
+                onTagFix={(fixedTag) => {
+                  // Update the tag with the fix and reload
+                  onReloadWithChanges?.(fixedTag);
+                }}
               />
             </TabsContent>
           </Tabs>
@@ -667,16 +743,16 @@ export function AuditPanel({
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <span className={`w-1.5 h-1.5 rounded-full ${
-                            event.type === 'pixel' || event.type === 'impression' || event.type === 'view'
+                            ['pixel', 'beacon', 'fetch', 'xhr', 'impression', 'view'].includes(event.type)
                               ? 'bg-purple-500'
-                              : event.type === 'open' || event.type === 'click'
+                              : ['open', 'click', 'anchor', 'window.open'].includes(event.type)
                               ? 'bg-cyan-500'
                               : 'bg-emerald-500'
                           }`} />
                           <code className={`text-xs ${
-                            event.type === 'pixel' || event.type === 'impression' || event.type === 'view'
+                            ['pixel', 'beacon', 'fetch', 'xhr', 'impression', 'view'].includes(event.type)
                               ? 'text-purple-400'
-                              : event.type === 'open' || event.type === 'click'
+                              : ['open', 'click', 'anchor', 'window.open'].includes(event.type)
                               ? 'text-cyan-400'
                               : 'text-emerald-400'
                           }`}>{event.type}</code>
